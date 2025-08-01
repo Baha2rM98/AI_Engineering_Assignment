@@ -1,10 +1,7 @@
 from typing import Dict, List, Any
-import os
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import create_agent_executor
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-from langchain.tools import Tool
 from pydantic import BaseModel
 
 
@@ -72,17 +69,17 @@ def initialize_agent():
         planning_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a database operation planner.
             Your job is to convert natural language database requests into a sequence of specific operations.
-            
+
             For the database with the following structure:
             {database_info}
-            
+
             Create a detailed plan that includes:
             1. The type of operation (select, insert, update, delete)
             2. The specific tables involved
             3. The columns to be affected
             4. Any conditions or filters
             5. Any sorting or grouping requirements
-            
+
             Format your response as a JSON-like structure that can be parsed and executed.
             """),
             ("user", "User query: {query}\nUnderstood intent: {understood_intent}")
@@ -130,17 +127,17 @@ def initialize_agent():
             ("system", """You are a database operation executor.
             Your job is to convert a database operation plan into specific parameters 
             for the database connector.
-            
+
             The database has the following structure:
             {database_info}
-            
+
             Parse the execution plan and extract the exact parameters needed for:
             - operation_type (select, insert, update, delete)
             - table name
             - columns/fields
             - conditions
             - values (for insert/update)
-            
+
             Format your response as a valid JSON object.
             """),
             ("user", "Execution plan: {execution_plan}")
@@ -183,7 +180,7 @@ def initialize_agent():
                 ("system", """You are a helpful database assistant.
                 When operations fail, you should provide a clear explanation of what went wrong
                 and suggest possible fixes or alternative approaches.
-                
+
                 Be conversational and helpful in your error messages.
                 """),
                 ("user", "Error: {error}\nOriginal query: {query}")
@@ -204,10 +201,10 @@ def initialize_agent():
             ("system", """You are a helpful database assistant.
             Your job is to generate a natural language response explaining the results of 
             database operations in a clear, conversational manner.
-            
+
             For SELECT operations, summarize what data was retrieved.
             For INSERT, UPDATE, DELETE operations, explain what changes were made.
-            
+
             Be concise but informative.
             """),
             ("user", "Original query: {query}\nOperation result: {result}")
@@ -234,7 +231,7 @@ def initialize_agent():
         error_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a database troubleshooter.
             Your job is to diagnose database query issues and provide helpful explanations.
-            
+
             When analyzing errors:
             1. Identify the likely cause of the error
             2. Suggest possible solutions or workarounds
