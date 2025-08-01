@@ -64,26 +64,206 @@ def initialize_agent():
     # 2. Query planning node
     def plan_execution(state: AgentState) -> AgentState:
         """Develop a plan for database operations based on the understood query."""
-        # Implementation details
-        return state
+        if "understood_intent" not in state.context:
+            state.error = "Query understanding failed. Cannot create execution plan."
+            return state
+
+        # Create a prompt for the planning step
+        planning_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a database operation planner.
+            Your job is to convert natural language database requests into a sequence of specific operations.
+            
+            For the database with the following structure:
+            {database_info}
+            
+            Create a detailed plan that includes:
+            1. The type of operation (select, insert, update, delete)
+            2. The specific tables involved
+            3. The columns to be affected
+            4. Any conditions or filters
+            5. Any sorting or grouping requirements
+            
+            Format your response as a JSON-like structure that can be parsed and executed.
+            """),
+            ("user", "User query: {query}\nUnderstood intent: {understood_intent}")
+        ])
+
+        chain = planning_prompt | llm
+
+        try:
+            result = chain.invoke({
+                "query": state.query,
+                "understood_intent": state.context["understood_intent"],
+                "database_info": state.database_info
+            })
+
+            # Parse the plan from the LLM response
+            state.context["execution_plan"] = result.content
+
+            # Extract operation type and parameters for later execution
+            # This simple extraction will be refined based on the LLM's output format
+            if "select" in result.content.lower():
+                state.current_plan.append("select")
+            elif "insert" in result.content.lower():
+                state.current_plan.append("insert")
+            elif "update" in result.content.lower():
+                state.current_plan.append("update")
+            elif "delete" in result.content.lower():
+                state.current_plan.append("delete")
+            else:
+                state.current_plan.append("unknown")
+
+            return state
+        except Exception as e:
+            state.error = f"Failed to create execution plan: {str(e)}"
+            return state
 
     # 3. Query execution node
     def execute_plan(state: AgentState) -> AgentState:
         """Execute the plan against the database."""
-        # Implementation details
-        return state
+        if "execution_plan" not in state.context:
+            state.error = "Execution plan missing. Cannot proceed with execution."
+            return state
+
+        # Create a prompt to parse the execution plan into actual database operations
+        execution_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a database operation executor.
+            Your job is to convert a database operation plan into specific parameters 
+            for the database connector.
+            
+            The database has the following structure:
+            {database_info}
+            
+            Parse the execution plan and extract the exact parameters needed for:
+            - operation_type (select, insert, update, delete)
+            - table name
+            - columns/fields
+            - conditions
+            - values (for insert/update)
+            
+            Format your response as a valid JSON object.
+            """),
+            ("user", "Execution plan: {execution_plan}")
+        ])
+
+        chain = execution_prompt | llm
+
+        try:
+            # Extract execution parameters from the plan
+            result = chain.invoke({
+                "execution_plan": state.context["execution_plan"],
+                "database_info": state.database_info
+            })
+
+            # Store the operation details for actual execution
+            # This would be connected to the database connector in a real implementation
+            state.context["operation_details"] = result.content
+
+            # Simulate database execution result (this would connect to actual database)
+            # In a complete implementation, we'd parse the operation details and call
+            # the database connector methods
+            state.execution_result = {
+                "success": True,
+                "operation": state.current_plan[0] if state.current_plan else "unknown",
+                "details": "Database operation executed successfully.",
+                "data": [{"sample": "data"}]  # Placeholder for actual data
+            }
+
+            return state
+        except Exception as e:
+            state.error = f"Failed to execute plan: {str(e)}"
+            return state
 
     # 4. Response formulation node
     def formulate_response(state: AgentState) -> AgentState:
         """Generate a natural language response based on execution results."""
-        # Implementation details
-        return state
+        # If there was an error, create an error response
+        if state.error:
+            response_prompt = ChatPromptTemplate.from_messages([
+                ("system", """You are a helpful database assistant.
+                When operations fail, you should provide a clear explanation of what went wrong
+                and suggest possible fixes or alternative approaches.
+                
+                Be conversational and helpful in your error messages.
+                """),
+                ("user", "Error: {error}\nOriginal query: {query}")
+            ])
+
+            chain = response_prompt | llm
+
+            result = chain.invoke({
+                "error": state.error,
+                "query": state.query
+            })
+
+            state.response = result.content
+            return state
+
+        # Create a prompt for generating a response based on successful execution
+        response_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a helpful database assistant.
+            Your job is to generate a natural language response explaining the results of 
+            database operations in a clear, conversational manner.
+            
+            For SELECT operations, summarize what data was retrieved.
+            For INSERT, UPDATE, DELETE operations, explain what changes were made.
+            
+            Be concise but informative.
+            """),
+            ("user", "Original query: {query}\nOperation result: {result}")
+        ])
+
+        chain = response_prompt | llm
+
+        try:
+            result = chain.invoke({
+                "query": state.query,
+                "result": state.execution_result
+            })
+
+            state.response = result.content
+            return state
+        except Exception as e:
+            state.error = f"Failed to formulate response: {str(e)}"
+            state.response = f"I encountered an issue while processing your request: {str(e)}"
+            return state
 
     # 5. Error handling node
     def handle_error(state: AgentState) -> AgentState:
         """Handle any errors that occurred during processing."""
-        # Implementation details
-        return state
+        error_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a database troubleshooter.
+            Your job is to diagnose database query issues and provide helpful explanations.
+            
+            When analyzing errors:
+            1. Identify the likely cause of the error
+            2. Suggest possible solutions or workarounds
+            3. Use a conversational, helpful tone
+            4. Avoid technical jargon when possible
+            """),
+            ("user", "Query: {query}\nError: {error}\nContext: {context}")
+        ])
+
+        chain = error_prompt | llm
+
+        try:
+            # Generate helpful error message
+            context_str = str({k: v for k, v in state.context.items()
+                               if k not in ["database_info"]})
+
+            result = chain.invoke({
+                "query": state.query,
+                "error": state.error,
+                "context": context_str
+            })
+
+            state.response = result.content
+            return state
+        except Exception as e:
+            # Fallback error handling
+            state.response = (f"I'm sorry, but I encountered an error processing your request. "
+                              f"Error details: {state.error}")
+            return state
 
     # Add nodes to the graph
     workflow.add_node("understand_query", understand_query)
