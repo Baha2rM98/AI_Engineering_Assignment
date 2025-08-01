@@ -1,0 +1,10 @@
+langchain>=0.0.267
+langgraph>=0.0.15
+psycopg2-binary>=2.9.6
+python-dotenv>=1.0.0
+fastapi>=0.95.2
+uvicorn>=0.22.0
+pytest>=7.3.1
+sqlalchemy>=2.0.15
+pydantic>=2.0.0
+openai>=1.0.0
