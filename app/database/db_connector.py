@@ -2,7 +2,6 @@ import os
 from typing import Dict, List, Any, Optional
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
-import json
 
 
 class DatabaseConnector:
@@ -15,10 +14,10 @@ class DatabaseConnector:
         else:
             # Default to environment variables
             db_user = os.getenv("DB_USER", "postgres")
-            db_password = os.getenv("DB_PASSWORD", "postgres")
+            db_password = os.getenv("DB_PASSWORD", "fuckoff")
             db_host = os.getenv("DB_HOST", "localhost")
             db_port = os.getenv("DB_PORT", "5432")
-            db_name = os.getenv("DB_NAME", "langagent")
+            db_name = os.getenv("DB_NAME", "sakila")
 
             self.connection_string = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
 
