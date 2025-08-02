@@ -20,7 +20,7 @@ def initialize_agent():
 
     # Initialize the language model
     llm = ChatOpenAI(
-        model="gpt-4-turbo",
+        model="gpt-4o",
         temperature=0
     )
 
