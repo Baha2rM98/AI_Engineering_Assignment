@@ -77,11 +77,26 @@ class DBAgentConnector:
             Dict[str, Any]: The results and response
         """
         try:
+            print("Starting query processing...")
+
             # Get agent results based on natural language query
-            agent_result = query_database(query, self.database_schema)
+            try:
+                print("Calling query_database...")
+                agent_result = query_database(query, self.database_schema)
+                print(f"Agent returned: {agent_result.keys() if agent_result else 'None'}")
+            except Exception as agent_error:
+                print(f"Error in query_database: {agent_error}")
+                import traceback
+                print(traceback.format_exc())
+                return {
+                    "success": False,
+                    "agent_response": f"Error communicating with the AI model: {str(agent_error)}",
+                    "error": str(agent_error)
+                }
 
             # If no operation details, return the agent's response
             if "operation_details" not in agent_result.get("context", {}):
+                print("No operation details in agent result")
                 return {
                     "success": True,
                     "agent_response": agent_result["response"],
@@ -89,52 +104,74 @@ class DBAgentConnector:
                 }
 
             # Parse operation details
-            operation_details = self._parse_operation_details(
-                agent_result["context"]["operation_details"]
-            )
-
-            # Execute actual database operation
-            if operation_details.get("operation_type") == "select":
-                db_result = self.db_connector.execute_operation(
-                    "select",
-                    {
-                        "table": operation_details.get("table", ""),
-                        "columns": operation_details.get("columns", ["*"]),
-                        "where": operation_details.get("where", ""),
-                        "limit": operation_details.get("limit", ""),
-                        "order_by": operation_details.get("order_by", "")
-                    }
+            print("Parsing operation details...")
+            try:
+                operation_details = self._parse_operation_details(
+                    agent_result["context"]["operation_details"]
                 )
-            elif operation_details.get("operation_type") == "insert":
-                db_result = self.db_connector.execute_operation(
-                    "insert",
-                    {
-                        "table": operation_details.get("table", ""),
-                        "values": operation_details.get("values", {})
-                    }
-                )
-            elif operation_details.get("operation_type") == "update":
-                db_result = self.db_connector.execute_operation(
-                    "update",
-                    {
-                        "table": operation_details.get("table", ""),
-                        "values": operation_details.get("values", {}),
-                        "where": operation_details.get("where", "")
-                    }
-                )
-            elif operation_details.get("operation_type") == "delete":
-                db_result = self.db_connector.execute_operation(
-                    "delete",
-                    {
-                        "table": operation_details.get("table", ""),
-                        "where": operation_details.get("where", "")
-                    }
-                )
-            else:
+                print(f"Parsed operation: {operation_details}")
+            except Exception as parse_error:
+                print(f"Error parsing operation details: {parse_error}")
                 return {
                     "success": False,
-                    "error": "Unsupported operation type",
-                    "agent_response": agent_result["response"]
+                    "agent_response": f"I understood your query but couldn't translate it to a database operation: {str(parse_error)}",
+                    "error": str(parse_error)
+                }
+
+            # Execute actual database operation
+            print(f"Executing operation type: {operation_details.get('operation_type')}")
+            try:
+                if operation_details.get("operation_type") == "select":
+                    db_result = self.db_connector.execute_operation(
+                        "select",
+                        {
+                            "table": operation_details.get("table", ""),
+                            "columns": operation_details.get("columns", ["*"]),
+                            "where": operation_details.get("where", ""),
+                            "limit": operation_details.get("limit", ""),
+                            "order_by": operation_details.get("order_by", "")
+                        }
+                    )
+                elif operation_details.get("operation_type") == "insert":
+                    db_result = self.db_connector.execute_operation(
+                        "insert",
+                        {
+                            "table": operation_details.get("table", ""),
+                            "values": operation_details.get("values", {})
+                        }
+                    )
+                elif operation_details.get("operation_type") == "update":
+                    db_result = self.db_connector.execute_operation(
+                        "update",
+                        {
+                            "table": operation_details.get("table", ""),
+                            "values": operation_details.get("values", {}),
+                            "where": operation_details.get("where", "")
+                        }
+                    )
+                elif operation_details.get("operation_type") == "delete":
+                    db_result = self.db_connector.execute_operation(
+                        "delete",
+                        {
+                            "table": operation_details.get("table", ""),
+                            "where": operation_details.get("where", "")
+                        }
+                    )
+                else:
+                    print(f"Unsupported operation type: {operation_details.get('operation_type')}")
+                    return {
+                        "success": False,
+                        "error": "Unsupported operation type",
+                        "agent_response": agent_result["response"]
+                    }
+
+                print(f"DB operation result: {db_result}")
+            except Exception as db_error:
+                print(f"Error executing database operation: {db_error}")
+                return {
+                    "success": False,
+                    "error": f"Database operation failed: {str(db_error)}",
+                    "agent_response": f"I tried to execute your query but encountered a database error: {str(db_error)}"
                 }
 
             return {
@@ -146,6 +183,9 @@ class DBAgentConnector:
             }
 
         except Exception as e:
+            import traceback
+            print(f"Unexpected error: {e}")
+            print(traceback.format_exc())
             return {
                 "success": False,
                 "error": f"Failed to execute query: {str(e)}",
