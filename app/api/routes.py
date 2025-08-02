@@ -114,3 +114,131 @@ def health_check(db_agent: DBAgentConnector = Depends(get_db_agent)):
         "status": "healthy",
         "database_connection": "ok"
     }
+
+
+import traceback
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+@app.post("/query", response_model=QueryResponse)
+def process_query(request: QueryRequest, db_agent: DBAgentConnector = Depends(get_db_agent)):
+    """
+    Process a natural language query and execute it against the database.
+
+    Args:
+        request (QueryRequest): The query request
+
+    Returns:
+        QueryResponse: The query response
+    """
+    if not request.query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+    try:
+        # Log the request for debugging
+        logger.info(f"Processing query: {request.query}")
+
+        result = db_agent.execute_natural_language_query(request.query)
+
+        # Log the result for debugging
+        logger.info(f"Query result: {result}")
+
+        return QueryResponse(
+            success=result.get("success", False),
+            message=result.get("agent_response", ""),
+            data=result.get("data"),
+            affected_rows=result.get("affected_rows")
+        )
+    except Exception as e:
+        # Log the full exception with stack trace
+        logger.error(f"Error processing query: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+
+
+@app.get("/debug-agent")
+def debug_agent():
+    """Test the agent's basic functionality."""
+    try:
+        from app.agent.langraph_agent import initialize_agent, AgentState
+
+        # Test agent initialization
+        agent = initialize_agent()
+
+        # Test a simple prompt
+        test_state = AgentState(query="Test query", database_info={"test_table": {"columns": ["id", "name"]}})
+
+        # This will show if the agent can be initialized and run
+        return {
+            "agent_initialized": agent is not None,
+            "agent_type": str(type(agent)),
+            "openai_key_available": bool(os.getenv("OPENAI_API_KEY")),
+            "openai_key_length": len(os.getenv("OPENAI_API_KEY", "")) if os.getenv("OPENAI_API_KEY") else 0
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+@app.post("/debug-query")
+def debug_query(request: QueryRequest, db_agent: DBAgentConnector = Depends(get_db_agent)):
+    """Debug version of the query endpoint with more verbose output."""
+    if not request.query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+    try:
+        # Test direct LLM connection first
+        from langchain_openai import ChatOpenAI
+        from langchain.prompts import ChatPromptTemplate
+
+        # Simple test of OpenAI connection
+        llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)  # Using a simpler model
+        test_prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are a helpful assistant."),
+            ("user", "Say hello!")
+        ])
+
+        chain = test_prompt | llm
+        llm_test_result = chain.invoke({})
+
+        # Get the database schema
+        schema = db_agent.database_schema
+        schema_sample = {k: {"columns": [c["name"] for c in v["columns"]]}
+                         for k, v in list(schema.items())[:3]} if schema else {}
+
+        # Now try the actual query but catch any errors
+        result = None
+        error = None
+        traceback_info = None
+
+        try:
+            result = db_agent.execute_natural_language_query(request.query)
+        except Exception as e:
+            import traceback
+            error = str(e)
+            traceback_info = traceback.format_exc()
+
+        # Return comprehensive debug info
+        return {
+            "query": request.query,
+            "openai_test": {
+                "success": True,
+                "response": llm_test_result.content if hasattr(llm_test_result, "content") else str(llm_test_result)
+            },
+            "database_schema_sample": schema_sample,
+            "schema_tables_count": len(schema) if schema else 0,
+            "result": result,
+            "error": error,
+            "traceback": traceback_info
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
