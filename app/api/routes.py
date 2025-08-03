@@ -193,14 +193,13 @@ def debug_query(request: QueryRequest, db_agent: DBAgentConnector = Depends(get_
 
     try:
         # Test direct LLM connection first
-        from langchain_openai import ChatOpenAI
+        from langchain_google_genai import ChatGoogleGenerativeAI
         from langchain.prompts import ChatPromptTemplate
 
-        # Simple test of OpenAI connection
-        llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)  # Using a simpler model
+        # Simple test of Gemini connection
+        llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0, convert_system_message_to_human=True)
         test_prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a helpful assistant."),
-            ("user", "Say hello!")
+            ("human", "You are a helpful assistant. Say hello!")
         ])
 
         chain = test_prompt | llm
@@ -226,7 +225,7 @@ def debug_query(request: QueryRequest, db_agent: DBAgentConnector = Depends(get_
         # Return comprehensive debug info
         return {
             "query": request.query,
-            "openai_test": {
+            "gemini_test": {
                 "success": True,
                 "response": llm_test_result.content if hasattr(llm_test_result, "content") else str(llm_test_result)
             },
@@ -239,6 +238,52 @@ def debug_query(request: QueryRequest, db_agent: DBAgentConnector = Depends(get_
     except Exception as e:
         import traceback
         return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+@app.get("/debug-gemini")
+def debug_gemini():
+    """Test the Gemini API connectivity"""
+    import os
+    import google.generativeai as genai
+
+    try:
+        api_key = os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            return {
+                "success": False,
+                "error": "GOOGLE_API_KEY environment variable not set"
+            }
+
+        genai.configure(api_key=api_key)
+
+        # List available models
+        models = genai.list_models()
+        gemini_models = [model.name for model in models if "gemini" in model.name.lower()]
+
+        if not gemini_models:
+            return {
+                "success": False,
+                "error": "No Gemini models available with your API key"
+            }
+
+        # Test simple generation with first available model
+        model = genai.GenerativeModel(gemini_models[0])
+        response = model.generate_content("Say hello")
+
+        return {
+            "success": True,
+            "available_models": gemini_models,
+            "recommended_model": gemini_models[0],
+            "test_response": response.text,
+            "instructions": "Use this model name in your LangChain code"
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
             "error": str(e),
             "traceback": traceback.format_exc()
         }
