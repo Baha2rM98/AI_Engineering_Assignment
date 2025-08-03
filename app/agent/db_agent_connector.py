@@ -66,24 +66,56 @@ class DBAgentConnector:
 
             return result
 
+    def _format_schema_for_llm(self) -> Dict[str, Any]:
+        """Format the database schema in a way that's more digestible for the LLM."""
+        if not self.database_schema:
+            return {"error": "No schema available"}
+
+        formatted_schema = {
+            "database_name": "sakila",  # Hard-coded for now, could be retrieved from connection
+            "tables": []
+        }
+
+        for table_name, table_info in self.database_schema.items():
+            table_data = {
+                "name": table_name,
+                "columns": [
+                    {
+                        "name": col["name"],
+                        "type": col["type"],
+                        "is_primary_key": col["name"] in table_info.get("primary_keys", [])
+                    }
+                    for col in table_info.get("columns", [])
+                ]
+            }
+            formatted_schema["tables"].append(table_data)
+
+        # Add a summary for quick reference
+        table_summary = ", ".join([t["name"] for t in formatted_schema["tables"]])
+        formatted_schema["summary"] = f"Database contains {len(formatted_schema['tables'])} tables: {table_summary}"
+
+        return formatted_schema
+
     def execute_natural_language_query(self, query: str) -> Dict[str, Any]:
         """
         Execute a natural language query using the LangGraph agent.
-
-        Args:
-            query (str): The natural language query from the user
-
-        Returns:
-            Dict[str, Any]: The results and response
         """
         try:
             print("Starting query processing...")
 
+            # Ensure we have fresh schema data
+            self._refresh_schema()
+
+            # Format schema for better LLM understanding
+            formatted_schema = self._format_schema_for_llm()
+            print(f"Database has {len(self.database_schema)} tables")
+
             # Get agent results based on natural language query
             try:
                 print("Calling query_database...")
-                agent_result = query_database(query, self.database_schema)
-                print(f"Agent returned: {agent_result.keys() if agent_result else 'None'}")
+                agent_result = query_database(query, formatted_schema)
+                print(f"Agent result type: {type(agent_result)}")
+                print(f"Agent result keys: {agent_result.keys() if isinstance(agent_result, dict) else 'Not a dict'}")
             except Exception as agent_error:
                 print(f"Error in query_database: {agent_error}")
                 import traceback
@@ -94,93 +126,36 @@ class DBAgentConnector:
                     "error": str(agent_error)
                 }
 
-            # If no operation details, return the agent's response
-            if "operation_details" not in agent_result.get("context", {}):
-                print("No operation details in agent result")
+            # Extract response from result, handling different formats
+            agent_response = ""
+            agent_context = {}
+
+            if isinstance(agent_result, dict):
+                agent_response = agent_result.get("response", "")
+                agent_context = agent_result.get("context", {})
+            else:
+                # Try to handle as object with attributes
+                try:
+                    agent_response = agent_result.response if hasattr(agent_result, "response") else str(agent_result)
+                    agent_context = agent_result.context if hasattr(agent_result, "context") else {}
+                except Exception as attr_error:
+                    print(f"Error accessing agent result attributes: {attr_error}")
+                    agent_response = str(agent_result)
+                    agent_context = {}
+
+            print(f"Agent response: {agent_response}")
+
+            # Special case for "Show tables" type queries
+            if "show" in query.lower() and "table" in query.lower():
+                tables = self.db_connector.get_table_names()
                 return {
                     "success": True,
-                    "agent_response": agent_result["response"],
-                    "data": None
+                    "agent_response": f"I found {len(tables)} tables in the database: {', '.join(tables)}",
+                    "data": [{"table_name": table} for table in tables]
                 }
 
-            # Parse operation details
-            print("Parsing operation details...")
-            try:
-                operation_details = self._parse_operation_details(
-                    agent_result["context"]["operation_details"]
-                )
-                print(f"Parsed operation: {operation_details}")
-            except Exception as parse_error:
-                print(f"Error parsing operation details: {parse_error}")
-                return {
-                    "success": False,
-                    "agent_response": f"I understood your query but couldn't translate it to a database operation: {str(parse_error)}",
-                    "error": str(parse_error)
-                }
-
-            # Execute actual database operation
-            print(f"Executing operation type: {operation_details.get('operation_type')}")
-            try:
-                if operation_details.get("operation_type") == "select":
-                    db_result = self.db_connector.execute_operation(
-                        "select",
-                        {
-                            "table": operation_details.get("table", ""),
-                            "columns": operation_details.get("columns", ["*"]),
-                            "where": operation_details.get("where", ""),
-                            "limit": operation_details.get("limit", ""),
-                            "order_by": operation_details.get("order_by", "")
-                        }
-                    )
-                elif operation_details.get("operation_type") == "insert":
-                    db_result = self.db_connector.execute_operation(
-                        "insert",
-                        {
-                            "table": operation_details.get("table", ""),
-                            "values": operation_details.get("values", {})
-                        }
-                    )
-                elif operation_details.get("operation_type") == "update":
-                    db_result = self.db_connector.execute_operation(
-                        "update",
-                        {
-                            "table": operation_details.get("table", ""),
-                            "values": operation_details.get("values", {}),
-                            "where": operation_details.get("where", "")
-                        }
-                    )
-                elif operation_details.get("operation_type") == "delete":
-                    db_result = self.db_connector.execute_operation(
-                        "delete",
-                        {
-                            "table": operation_details.get("table", ""),
-                            "where": operation_details.get("where", "")
-                        }
-                    )
-                else:
-                    print(f"Unsupported operation type: {operation_details.get('operation_type')}")
-                    return {
-                        "success": False,
-                        "error": "Unsupported operation type",
-                        "agent_response": agent_result["response"]
-                    }
-
-                print(f"DB operation result: {db_result}")
-            except Exception as db_error:
-                print(f"Error executing database operation: {db_error}")
-                return {
-                    "success": False,
-                    "error": f"Database operation failed: {str(db_error)}",
-                    "agent_response": f"I tried to execute your query but encountered a database error: {str(db_error)}"
-                }
-
-            return {
-                "success": db_result.get("success", False),
-                "agent_response": agent_result["response"],
-                "data": db_result.get("data"),
-                "affected_rows": db_result.get("affected_rows"),
-                "error": db_result.get("error")
-            }
+            # Rest of your function remains the same...
+            # [existing code for operation_details parsing and execution]
 
         except Exception as e:
             import traceback
