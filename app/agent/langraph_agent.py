@@ -3,7 +3,6 @@ from langgraph.graph import StateGraph, END
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import ChatPromptTemplate
 from pydantic import BaseModel
-import os
 
 
 class AgentState(BaseModel):
@@ -20,19 +19,24 @@ def initialize_agent():
     """Initialize the LangGraph agent with tools and memory management."""
 
     # Initialize the language model with Gemini
-    # Updated to use the correct model name format
     llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-pro",  # Use the working model name
+        model="gemini-1.5-pro",
         temperature=0,
         convert_system_message_to_human=True  # Important for Gemini compatibility
     )
 
     # Define the system message for the agent
-    system_message = """You are a database assistant that helps users interact with databases through natural language.
+    system_message = """You are a database assistant that helps users interact with a PostgreSQL database.
     You can interpret user queries, develop plans to retrieve or modify data, and execute those plans.
 
-    You have access to the following database information:
+    DATABASE INFORMATION:
     {database_info}
+
+    Important instructions:
+    1. When asked about tables, make sure to reference ALL tables from the database
+    2. For data retrieval, use the appropriate SQL operations (SELECT)
+    3. Format your responses clearly and concisely
+    4. If the database schema information is incomplete, ask for it
 
     Your goal is to understand what the user wants to do with the database and help them accomplish it.
     """
@@ -304,16 +308,101 @@ def initialize_agent():
 
 def query_database(query: str, database_info: Dict[str, Any]) -> Dict[str, Any]:
     """Execute a query against the database using the LangGraph agent."""
-    agent = initialize_agent()
+    try:
+        print("Initializing LangGraph agent...")
+        agent = initialize_agent()
 
-    initial_state = AgentState(
-        query=query,
-        database_info=database_info
-    )
+        print(f"Query: {query}")
+        print(f"Database info summary: {len(database_info)} tables available")
 
-    result = agent.invoke(initial_state)
-    return {
-        "response": result.response,
-        "context": result.context,
-        "execution_details": result.execution_result
-    }
+        # Prepare a concise version of schema for logging
+        schema_summary = {}
+        if isinstance(database_info, dict):
+            for table_name in list(database_info.keys())[:3]:  # Just log a few tables
+                if isinstance(database_info[table_name], dict) and "columns" in database_info[table_name]:
+                    schema_summary[table_name] = {
+                        "columns_count": len(database_info[table_name]["columns"]),
+                        "sample_columns": [c["name"] for c in database_info[table_name]["columns"][:3]]
+                    }
+        print(f"Schema summary: {schema_summary}")
+
+        initial_state = AgentState(
+            query=query,
+            database_info=database_info
+        )
+
+        print("Invoking agent...")
+        result = agent.invoke(initial_state)
+        print(f"Agent result type: {type(result)}")
+
+        if hasattr(result, 'response'):
+            print(f"Agent response: {result.response[:100]}...")
+        else:
+            print(f"Agent result has no 'response' attribute: {result}")
+
+        # Ensure we always return a dictionary
+        if isinstance(result, dict):
+            return result
+        elif hasattr(result, 'response'):
+            # Convert AgentState to dictionary
+            return {
+                "response": result.response,
+                "context": result.context if hasattr(result, "context") else {},
+                "execution_details": result.execution_result if hasattr(result, "execution_result") else {}
+            }
+        else:
+            print(f"WARNING: Unexpected result type from agent: {type(result)}")
+            return {
+                "response": "The agent could not process your query properly.",
+                "context": {},
+                "execution_details": {}
+            }
+
+    except Exception as e:
+        import traceback
+        print(f"Error in query_database: {e}")
+        print(traceback.format_exc())
+
+        # Return error result instead of None
+        return {
+            "response": f"Error processing query: {str(e)}",
+            "context": {"error": str(e)},
+            "execution_details": {"error": traceback.format_exc()}
+        }
+
+# def query_database(query: str, database_info: Dict[str, Any]) -> Dict[str, Any]:
+#     """Execute a query against the database using the LangGraph agent."""
+#     agent = initialize_agent()
+#
+#     initial_state = AgentState(
+#         query=query,
+#         database_info=database_info
+#     )
+#
+#     # Run the agent
+#     result = agent.invoke(initial_state)
+#
+#     # Handle different result types - could be a dictionary or an object with attributes
+#     if isinstance(result, dict):
+#         # If result is already a dictionary, use it directly
+#         return {
+#             "response": result.get("response", ""),
+#             "context": result.get("context", {}),
+#             "execution_details": result.get("execution_result", {})
+#         }
+#     else:
+#         # If result is an object with attributes (the original expectation)
+#         try:
+#             return {
+#                 "response": result.response if hasattr(result, "response") else "",
+#                 "context": result.context if hasattr(result, "context") else {},
+#                 "execution_details": result.execution_result if hasattr(result, "execution_result") else {}
+#             }
+#         except Exception as e:
+#             # Provide a fallback in case of unexpected result structure
+#             print(f"Warning: Unexpected result structure from agent: {e}")
+#             return {
+#                 "response": str(result),
+#                 "context": {"raw_result": str(result)},
+#                 "execution_details": {}
+#             }
