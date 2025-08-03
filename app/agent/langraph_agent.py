@@ -1,8 +1,9 @@
 from typing import Dict, List, Any
 from langgraph.graph import StateGraph, END
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import ChatPromptTemplate
 from pydantic import BaseModel
+import os
 
 
 class AgentState(BaseModel):
@@ -18,10 +19,12 @@ class AgentState(BaseModel):
 def initialize_agent():
     """Initialize the LangGraph agent with tools and memory management."""
 
-    # Initialize the language model
-    llm = ChatOpenAI(
-        model="gpt-4o",
-        temperature=0
+    # Initialize the language model with Gemini
+    # Updated to use the correct model name format
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-1.5-pro",  # Use the working model name
+        temperature=0,
+        convert_system_message_to_human=True  # Important for Gemini compatibility
     )
 
     # Define the system message for the agent
@@ -34,7 +37,7 @@ def initialize_agent():
     Your goal is to understand what the user wants to do with the database and help them accomplish it.
     """
 
-    # Define the agent's workflow as a graph
+    # Rest of the agent implementation remains the same
     workflow = StateGraph(AgentState)
 
     # Define the nodes
@@ -114,6 +117,9 @@ def initialize_agent():
         except Exception as e:
             state.error = f"Failed to create execution plan: {str(e)}"
             return state
+
+    # The rest of the code remains the same...
+    # [Keep all remaining functions and workflow definitions as they were]
 
     # 3. Query execution node
     def execute_plan(state: AgentState) -> AgentState:
