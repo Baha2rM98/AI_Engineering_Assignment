@@ -1,7 +1,11 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import json
+import traceback
+import logging
 from app.database.db_connector import DatabaseConnector
 from app.agent.langraph_agent import query_database
+
+logger = logging.getLogger(__name__)
 
 
 class DBAgentConnector:
@@ -22,6 +26,7 @@ class DBAgentConnector:
         try:
             self.database_schema = self.db_connector.get_database_schema()
         except Exception as e:
+            logger.error(f"Failed to fetch schema: {e}")
             self.database_schema = {"error": f"Failed to fetch schema: {str(e)}"}
 
     def _parse_operation_details(self, operation_details: str) -> Dict[str, Any]:
@@ -39,6 +44,7 @@ class DBAgentConnector:
 
             return json.loads(json_str)
         except Exception as e:
+            logger.debug(f"JSON parsing failed: {e}, falling back to basic parsing")
             # Fallback to basic parsing if JSON extraction fails
             result = {}
             operation_lower = operation_details.lower()
@@ -96,149 +102,86 @@ class DBAgentConnector:
 
         return formatted_schema
 
-    def execute_natural_language_query(self, query: str) -> Dict[str, Any]:
-        """
-        Execute a natural language query using the LangGraph agent.
-        """
+    def _extract_sql_from_response(self, response: str, context: Dict[str, Any]) -> Optional[str]:
+        """Extract SQL from agent response or context."""
+        # Try to get SQL from context first
+        if "sql_query" in context:
+            return context["sql_query"]
+
+        # Try to extract from code blocks
+        if "```sql" in response:
+            parts = response.split("```sql")
+            if len(parts) > 1:
+                sql = parts[1].split("```")[0].strip()
+                if sql:
+                    return sql
+
+        # Check for code blocks without language specification
+        if "```" in response:
+            parts = response.split("```")
+            for i in range(1, len(parts), 2):
+                if i < len(parts):
+                    code = parts[i].strip()
+                    # Check if it looks like SQL
+                    if code.lower().startswith(("select", "insert", "update", "delete")):
+                        return code
+
+        # Try to extract from operation details in context
+        if "operation_details" in context and isinstance(context["operation_details"], str):
+            details = context["operation_details"]
+            # Look for SQL in the details
+            if "```sql" in details:
+                sql = details.split("```sql")[1].split("```")[0].strip()
+                if sql:
+                    return sql
+
+        return None
+
+    def _generate_sql_from_llm(self, query: str, schema_info: Dict[str, Any]) -> Optional[str]:
+        """Generate SQL directly using the LLM."""
         try:
-            print("Starting query processing...")
+            from langchain_google_genai import ChatGoogleGenerativeAI
 
-            # Ensure we have fresh schema data
-            self._refresh_schema()
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-1.5-pro",
+                temperature=0,
+                convert_system_message_to_human=True
+            )
 
-            # Format schema for better LLM understanding
-            formatted_schema = self._format_schema_for_llm()
-            print(f"Database has {len(self.database_schema)} tables")
+            # Create a focused prompt for SQL generation
+            prompt = f"""
+            Generate SQL for PostgreSQL to answer this query: "{query}"
 
-            # Special case for "Show tables" type queries
-            if "show" in query.lower() and "table" in query.lower():
-                tables = self.db_connector.get_table_names()
-                return {
-                    "success": True,
-                    "agent_response": f"I found {len(tables)} tables in the database: {', '.join(tables)}",
-                    "data": [{"table_name": table} for table in tables]
-                }
+            Database schema summary:
+            {schema_info.get("summary", "No schema information available")}
 
-            # Get agent results based on natural language query
-            try:
-                print("Calling query_database...")
-                agent_result = query_database(query, formatted_schema)
-                print(f"Agent result type: {type(agent_result)}")
-                print(f"Agent result keys: {agent_result.keys() if isinstance(agent_result, dict) else 'Not a dict'}")
-            except Exception as agent_error:
-                print(f"Error in query_database: {agent_error}")
-                import traceback
-                print(traceback.format_exc())
-                return {
-                    "success": False,
-                    "agent_response": f"Error communicating with the AI model: {str(agent_error)}",
-                    "error": str(agent_error)
-                }
+            Important:
+            1. Return ONLY the SQL query with no explanations or markdown formatting
+            2. Use appropriate filtering, sorting, and limits based on the query
+            3. Make sure all table and column names are correct
+            4. For numeric limits mentioned in the query, use those exact numbers
+            """
 
-            # Extract response from result
-            agent_response = ""
-            if isinstance(agent_result, dict):
-                agent_response = agent_result.get("response", "")
-                agent_context = agent_result.get("context", {})
-            else:
-                try:
-                    agent_response = agent_result.response if hasattr(agent_result, "response") else str(agent_result)
-                    agent_context = agent_result.context if hasattr(agent_result, "context") else {}
-                except Exception as attr_error:
-                    print(f"Error accessing agent result attributes: {attr_error}")
-                    agent_response = str(agent_result)
-                    agent_context = {}
+            result = llm.invoke(prompt)
+            sql = result.content if hasattr(result, "content") else str(result)
 
-            print(f"Agent response: {agent_response}")
+            # Clean up the SQL to ensure it's executable
+            sql = sql.strip()
+            if sql.startswith("```sql"):
+                sql = sql.replace("```sql", "", 1)
+            if sql.endswith("```"):
+                sql = sql[:-3]
 
-            # Extract SQL from agent response
-            sql_query = None
-            if "```sql" in agent_response:
-                sql_parts = agent_response.split("```sql")
-                if len(sql_parts) > 1:
-                    sql_query = sql_parts[1].split("```")[0].strip()
-            elif "```" in agent_response:
-                code_blocks = agent_response.split("```")
-                for i in range(1, len(code_blocks), 2):
-                    if i < len(code_blocks):
-                        potential_sql = code_blocks[i].strip()
-                        if potential_sql.lower().startswith(("select", "insert", "update", "delete")):
-                            sql_query = potential_sql
-                            break
+            sql = sql.strip()
 
-            # Try to execute SQL if found
-            if sql_query:
-                print(f"Executing extracted SQL: {sql_query}")
-                db_result = self.db_connector.execute_query(sql_query)
+            # Validate that it looks like SQL
+            if sql.lower().startswith(("select", "insert", "update", "delete")):
+                return sql
 
-                # Generate a better response based on the actual results
-                if db_result.get("success"):
-                    data = db_result.get("data", [])
-                    row_count = len(data)
-
-                    # Determine table name from SQL query
-                    table_name = self._extract_table_name_from_sql(sql_query)
-
-                    # Generate a better response based on the actual data
-                    if row_count > 0:
-                        response = f"I found {row_count} records in the {table_name} table. "
-                        # Show sample data for the first few records if available
-                        if row_count > 5:
-                            response += f"Here are the first 5 entries."
-                        else:
-                            response += f"Here are all the entries."
-                    else:
-                        response = f"I couldn't find any records in the {table_name} table matching your criteria."
-
-                    return {
-                        "success": True,
-                        "agent_response": response,
-                        "data": data,
-                        "affected_rows": row_count
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "agent_response": f"Error executing the query: {db_result.get('error')}",
-                        "error": db_result.get("error")
-                    }
-
-            # If we can't extract SQL, try to determine which table the query is about
-            target_table = self._identify_table_from_query(query)
-
-            if target_table:
-                # Generate a basic SQL query for the identified table
-                limit_clause = "LIMIT 5" if "all" not in query.lower() else ""
-                sql = f"SELECT * FROM {target_table} {limit_clause}"
-                print(f"Executing fallback SQL for table {target_table}: {sql}")
-
-                db_result = self.db_connector.execute_query(sql)
-
-                if db_result.get("success"):
-                    data = db_result.get("data", [])
-                    return {
-                        "success": True,
-                        "agent_response": f"Here are the results from the {target_table} table ({len(data)} records found).",
-                        "data": data,
-                        "affected_rows": len(data)
-                    }
-
-            # If all attempts failed, return the agent's response with an error
-            return {
-                "success": False,
-                "agent_response": agent_response or "I couldn't execute this query successfully.",
-                "error": "Could not generate executable SQL from the query"
-            }
-
+            return None
         except Exception as e:
-            import traceback
-            print(f"Unexpected error: {e}")
-            print(traceback.format_exc())
-            return {
-                "success": False,
-                "error": f"Failed to execute query: {str(e)}",
-                "agent_response": "I encountered an error while processing your request."
-            }
+            logger.error(f"Error generating SQL from LLM: {e}")
+            return None
 
     def _extract_table_name_from_sql(self, sql: str) -> str:
         """Extract table name from a SQL query."""
@@ -291,3 +234,187 @@ class DBAgentConnector:
             return list(self.database_schema.keys())[0]
 
         return None
+
+    def _generate_result_message(self, query: str, sql: str, data: List[Dict[str, Any]]) -> str:
+        """Generate appropriate response message based on the query and results."""
+        row_count = len(data)
+
+        # Extract operation type
+        operation = "query"
+        if sql.lower().startswith("select"):
+            operation = "SELECT"
+        elif sql.lower().startswith("insert"):
+            operation = "INSERT"
+        elif sql.lower().startswith("update"):
+            operation = "UPDATE"
+        elif sql.lower().startswith("delete"):
+            operation = "DELETE"
+
+        # Extract table name
+        table_name = self._extract_table_name_from_sql(sql) or "the database"
+
+        # Generate appropriate message
+        if operation == "SELECT":
+            if row_count == 0:
+                return f"I couldn't find any matching records in {table_name} for your query."
+            elif row_count == 1:
+                return f"I found 1 record in {table_name} that matches your query."
+            else:
+                # Check if this is a limited result
+                if "limit" in sql.lower() and row_count < 20:  # Assuming small limits are intentional
+                    return f"Here are the {row_count} records you requested from {table_name}."
+                else:
+                    return f"I found {row_count} records in {table_name} that match your query."
+        elif operation == "INSERT":
+            return f"Successfully inserted {row_count} record(s) into {table_name}."
+        elif operation == "UPDATE":
+            return f"Successfully updated {row_count} record(s) in {table_name}."
+        elif operation == "DELETE":
+            return f"Successfully deleted {row_count} record(s) from {table_name}."
+        else:
+            return f"Query executed successfully. Affected {row_count} record(s)."
+
+    def execute_natural_language_query(self, query: str) -> Dict[str, Any]:
+        """
+        Execute a natural language query using the LangGraph agent.
+
+        This method processes a natural language query through these steps:
+        1. Calls the LangGraph agent to understand the query
+        2. Extracts SQL or operation details from the agent's response
+        3. Executes the SQL against the database
+        4. Formats the results with a natural language response
+
+        Args:
+            query: A natural language query string
+
+        Returns:
+            Dictionary containing:
+            - success: Boolean indicating if the query was successful
+            - agent_response: Natural language response to the query
+            - data: Query results (if applicable)
+            - affected_rows: Number of rows affected (if applicable)
+            - error: Error message (if unsuccessful)
+        """
+        try:
+            logger.info(f"Processing natural language query: {query}")
+
+            # Ensure we have fresh schema data
+            self._refresh_schema()
+
+            # Format schema for better LLM understanding
+            formatted_schema = self._format_schema_for_llm()
+            logger.info(f"Database has {len(self.database_schema)} tables")
+
+            # Special case for "Show tables" type queries
+            if "show" in query.lower() and "table" in query.lower():
+                tables = self.db_connector.get_table_names()
+                return {
+                    "success": True,
+                    "agent_response": f"I found {len(tables)} tables in the database: {', '.join(tables)}",
+                    "data": [{"table_name": table} for table in tables],
+                    "affected_rows": len(tables)
+                }
+
+            # Get agent results based on natural language query
+            try:
+                logger.info("Calling LangGraph agent...")
+                agent_result = query_database(query, formatted_schema)
+                logger.info(f"Agent result type: {type(agent_result)}")
+            except Exception as agent_error:
+                logger.error(f"Error in query_database: {agent_error}")
+                logger.error(traceback.format_exc())
+                return {
+                    "success": False,
+                    "agent_response": f"Error communicating with the AI model: {str(agent_error)}",
+                    "error": str(agent_error)
+                }
+
+            # Extract response and context from agent result
+            agent_response = ""
+            agent_context = {}
+            if isinstance(agent_result, dict):
+                agent_response = agent_result.get("response", "")
+                agent_context = agent_result.get("context", {})
+            else:
+                try:
+                    agent_response = agent_result.response if hasattr(agent_result, "response") else str(agent_result)
+                    agent_context = agent_result.context if hasattr(agent_result, "context") else {}
+                except Exception as attr_error:
+                    logger.error(f"Error accessing agent result attributes: {attr_error}")
+                    agent_response = str(agent_result)
+
+            logger.info(f"Agent response: {agent_response[:100]}...")  # Log first 100 chars
+
+            # STAGE 1: Try to directly extract SQL from the response or context
+            sql_query = self._extract_sql_from_response(agent_response, agent_context)
+
+            if sql_query:
+                logger.info(f"Executing extracted SQL: {sql_query}")
+                db_result = self.db_connector.execute_query(sql_query)
+
+                if db_result.get("success"):
+                    data = db_result.get("data", [])
+                    table_name = self._extract_table_name_from_sql(sql_query) or "the database"
+                    return {
+                        "success": True,
+                        "agent_response": self._generate_result_message(query, sql_query, data),
+                        "data": data,
+                        "affected_rows": len(data)
+                    }
+                else:
+                    logger.error(f"SQL execution failed: {db_result.get('error')}")
+
+            # STAGE 2: If direct SQL extraction failed, try to generate SQL using a dedicated LLM call
+            sql_query = self._generate_sql_from_llm(query, formatted_schema)
+
+            if sql_query:
+                logger.info(f"Executing LLM-generated SQL: {sql_query}")
+                db_result = self.db_connector.execute_query(sql_query)
+
+                if db_result.get("success"):
+                    data = db_result.get("data", [])
+                    return {
+                        "success": True,
+                        "agent_response": self._generate_result_message(query, sql_query, data),
+                        "data": data,
+                        "affected_rows": len(data)
+                    }
+
+            # STAGE 3: Last resort - try to find mentioned tables and do a basic query
+            target_table = self._identify_table_from_query(query)
+            if target_table:
+                # Extract numeric values for potential limits
+                limit = 5  # Default
+                for word in query.lower().split():
+                    if word.isdigit() and 1 <= int(word) <= 1000:  # Reasonable limit range
+                        limit = int(word)
+                        break
+
+                sql = f"SELECT * FROM {target_table} LIMIT {limit}"
+                logger.info(f"Executing last-resort SQL: {sql}")
+
+                db_result = self.db_connector.execute_query(sql)
+                if db_result.get("success"):
+                    data = db_result.get("data", [])
+                    return {
+                        "success": True,
+                        "agent_response": f"Found {len(data)} records in the {target_table} table.",
+                        "data": data,
+                        "affected_rows": len(data)
+                    }
+
+            # If all attempts failed, return the agent's response
+            return {
+                "success": False,
+                "agent_response": agent_response or "I couldn't execute your query successfully.",
+                "error": "Failed to generate executable SQL from query"
+            }
+
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            logger.error(traceback.format_exc())
+            return {
+                "success": False,
+                "error": f"Failed to execute query: {str(e)}",
+                "agent_response": "I encountered an error while processing your request."
+            }
