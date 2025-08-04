@@ -148,7 +148,9 @@ def initialize_agent():
             - conditions
             - values (for insert/update)
 
-            Format your response as a valid JSON object.
+            Format your response as a valid JSON object or SQL query.
+            If using JSON, include at least operation_type and table fields.
+            If using SQL, provide the complete SQL statement that can be executed directly.
             """),
             ("user", "Execution plan: {execution_plan}")
         ])
@@ -163,17 +165,34 @@ def initialize_agent():
             })
 
             # Store the operation details for actual execution
-            # This would be connected to the database connector in a real implementation
             state.context["operation_details"] = result.content
 
-            # Simulate database execution result (this would connect to actual database)
-            # In a complete implementation, we'd parse the operation details and call
-            # the database connector methods
+            # Check if the response includes SQL
+            if "```sql" in result.content.lower():
+                # Extract SQL from code block
+                sql = result.content.split("```sql")[1].split("```")[0].strip()
+                state.context["sql_query"] = sql
+                state.current_plan.append("sql")
+            else:
+                # Extract operation type from the response
+                if "select" in result.content.lower():
+                    state.current_plan.append("select")
+                elif "insert" in result.content.lower():
+                    state.current_plan.append("insert")
+                elif "update" in result.content.lower():
+                    state.current_plan.append("update")
+                elif "delete" in result.content.lower():
+                    state.current_plan.append("delete")
+                else:
+                    state.current_plan.append("unknown")
+
+            # Set placeholder execution result
+            # The actual execution happens in DBAgentConnector
             state.execution_result = {
                 "success": True,
                 "operation": state.current_plan[0] if state.current_plan else "unknown",
-                "details": "Database operation executed successfully.",
-                "data": [{"sample": "data"}]  # Placeholder for actual data
+                "details": "Database operation plan created successfully.",
+                "data": []  # Will be populated by the connector
             }
 
             return state
@@ -369,40 +388,3 @@ def query_database(query: str, database_info: Dict[str, Any]) -> Dict[str, Any]:
             "context": {"error": str(e)},
             "execution_details": {"error": traceback.format_exc()}
         }
-
-# def query_database(query: str, database_info: Dict[str, Any]) -> Dict[str, Any]:
-#     """Execute a query against the database using the LangGraph agent."""
-#     agent = initialize_agent()
-#
-#     initial_state = AgentState(
-#         query=query,
-#         database_info=database_info
-#     )
-#
-#     # Run the agent
-#     result = agent.invoke(initial_state)
-#
-#     # Handle different result types - could be a dictionary or an object with attributes
-#     if isinstance(result, dict):
-#         # If result is already a dictionary, use it directly
-#         return {
-#             "response": result.get("response", ""),
-#             "context": result.get("context", {}),
-#             "execution_details": result.get("execution_result", {})
-#         }
-#     else:
-#         # If result is an object with attributes (the original expectation)
-#         try:
-#             return {
-#                 "response": result.response if hasattr(result, "response") else "",
-#                 "context": result.context if hasattr(result, "context") else {},
-#                 "execution_details": result.execution_result if hasattr(result, "execution_result") else {}
-#             }
-#         except Exception as e:
-#             # Provide a fallback in case of unexpected result structure
-#             print(f"Warning: Unexpected result structure from agent: {e}")
-#             return {
-#                 "response": str(result),
-#                 "context": {"raw_result": str(result)},
-#                 "execution_details": {}
-#             }
