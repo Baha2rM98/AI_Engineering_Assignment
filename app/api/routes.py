@@ -6,10 +6,12 @@ import os
 import traceback
 import logging
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
     title="LangGraph Database Agent API",
-    description="API for natural language database interactions using LangGraph",
-    version="1.0.0"
+    description="API for natural language database interactions using LangGraph with Memory Management",
+    version="2.0.0"
 )
 
 # Global instance of the DB agent connector
@@ -58,9 +60,15 @@ class SessionInfoResponse(BaseModel):
 @app.get("/")
 def read_root():
     return {
-        "name": "LangGraph Database Agent API",
-        "version": "1.0.0",
-        "description": "Natural language interface for database operations with memory management"
+        "name": "LangGraph Database Agent API with Memory Management",
+        "version": "2.0.0",
+        "description": "Natural language interface for database operations with conversation memory",
+        "features": [
+            "Session-based conversation memory",
+            "Contextual reference resolution",
+            "Multi-user session isolation",
+            "Conversation history tracking"
+        ]
     }
 
 
@@ -69,7 +77,11 @@ def health_check(db_agent: DBAgentConnector = Depends(get_db_agent)):
     connection_ok = db_agent.db_connector.test_connection()
     if not connection_ok:
         raise HTTPException(status_code=503, detail="Database connection failed")
-    return {"status": "healthy", "database_connection": "ok"}
+    return {
+        "status": "healthy",
+        "database_connection": "ok",
+        "active_sessions": len(db_agent.conversation_sessions)
+    }
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -79,7 +91,7 @@ def process_query(request: QueryRequest, db_agent: DBAgentConnector = Depends(ge
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
     try:
-        logging.info(f"Processing query for session {request.session_id}: {request.query}")
+        logger.info(f"Processing query for session {request.session_id}: {request.query}")
 
         result = db_agent.execute_natural_language_query(
             request.query,
@@ -98,8 +110,8 @@ def process_query(request: QueryRequest, db_agent: DBAgentConnector = Depends(ge
             context_info=session_info if session_info.get("session_id") else None
         )
     except Exception as e:
-        logging.error(f"Error processing query: {str(e)}")
-        logging.error(traceback.format_exc())
+        logger.error(f"Error processing query: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
 
 
