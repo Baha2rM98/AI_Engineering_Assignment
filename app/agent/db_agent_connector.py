@@ -1,4 +1,5 @@
 from typing import Dict, Any, List, Optional
+import json
 import traceback
 import logging
 from datetime import datetime, timedelta
@@ -30,10 +31,8 @@ class ConversationSession:
         # Extract context information from result
         if result.get("success"):
             # Try to extract table name from the result
-            if "data" in result and result["data"]:
-                # If we executed SQL, try to remember the table
-                if "sql_query" in result:
-                    self._extract_table_from_sql(result["sql_query"])
+            if "sql_query" in result:
+                self._extract_table_from_sql(result["sql_query"])
 
             # Remember the operation type
             if "operation_type" in result:
@@ -144,27 +143,112 @@ class DBAgentConnector:
             del self.conversation_sessions[sid]
             logger.debug(f"Cleaned up expired session: {sid}")
 
+    def _is_table_listing_query(self, query: str) -> bool:
+        """
+        Improved detection for table listing queries.
+        Only returns True for explicit table listing requests.
+        """
+        query_lower = query.lower().strip()
+
+        # Explicit table listing patterns
+        table_listing_patterns = [
+            "show tables",
+            "list tables",
+            "show all tables",
+            "list all tables",
+            "what tables",
+            "which tables",
+            "get tables",
+            "display tables"
+        ]
+
+        # Check for exact matches or patterns at start of query
+        for pattern in table_listing_patterns:
+            if query_lower == pattern or query_lower.startswith(pattern):
+                return True
+
+        # Additional check: "show" + "table" but NOT contextual references
+        if "show" in query_lower and "table" in query_lower:
+            # Exclude contextual references
+            contextual_references = [
+                "that table",
+                "the same table",
+                "this table",
+                "from that table",
+                "from the same table",
+                "from this table"
+            ]
+
+            for ref in contextual_references:
+                if ref in query_lower:
+                    return False  # This is a contextual reference, not table listing
+
+            # If it contains "show" and "table" but no contextual references,
+            # it might be a table listing request
+            return True
+
+        return False
+
     def _resolve_contextual_references(self, query: str, session: ConversationSession) -> str:
-        """Resolve contextual references in the query using session history."""
+        """Enhanced contextual reference resolution."""
         query_lower = query.lower()
         resolved_query = query
 
-        # Handle table references
-        if any(ref in query_lower for ref in ["that table", "the same table", "this table"]):
-            if session.last_table:
-                resolved_query = resolved_query.replace("that table", f"the {session.last_table} table")
-                resolved_query = resolved_query.replace("the same table", f"the {session.last_table} table")
-                resolved_query = resolved_query.replace("this table", f"the {session.last_table} table")
+        # Handle table references with more variations
+        table_references = [
+            "that table",
+            "the same table",
+            "this table",
+            "from that table",
+            "from the same table",
+            "from this table"
+        ]
 
-        # Handle count references
-        if query_lower in ["how many?", "count them", "how many are there?"]:
-            if session.last_table:
-                resolved_query = f"Count all records in the {session.last_table} table"
+        if session.last_table and any(ref in query_lower for ref in table_references):
+            # Replace all variations
+            for ref in table_references:
+                if ref in query_lower:
+                    # More natural replacement
+                    if "from" in ref:
+                        replacement = f"from the {session.last_table} table"
+                    else:
+                        replacement = f"the {session.last_table} table"
+                    resolved_query = resolved_query.replace(ref, replacement)
 
-        # Handle "more" references
-        if "show me more" in query_lower or "get more" in query_lower:
+            logger.info(f"Resolved table reference: '{session.last_table}'")
+
+        # Handle count/quantity references
+        quantity_queries = [
+            "how many?",
+            "count them",
+            "how many are there?",
+            "what's the count?",
+            "give me the count"
+        ]
+
+        if query_lower.strip() in quantity_queries and session.last_table:
+            resolved_query = f"Count all records in the {session.last_table} table"
+            logger.info(f"Resolved count query for table: {session.last_table}")
+
+        # Handle "show me more" references
+        if any(phrase in query_lower for phrase in ["show me more", "get more", "more records"]):
             if session.last_table:
                 resolved_query = f"Show me more records from the {session.last_table} table"
+                logger.info(f"Resolved 'more' query for table: {session.last_table}")
+
+        # Handle limit extractions more intelligently
+        if "first" in query_lower and session.last_table:
+            # Extract number after "first"
+            words = query.split()
+            for i, word in enumerate(words):
+                if word.lower() == "first" and i + 1 < len(words):
+                    try:
+                        limit = int(words[i + 1])
+                        resolved_query = f"Show me the first {limit} records from the {session.last_table} table"
+                        logger.info(f"Resolved limit query: {limit} from {session.last_table}")
+                        break
+                    except ValueError:
+                        continue
 
         return resolved_query
 
@@ -183,7 +267,6 @@ class DBAgentConnector:
 
         return enhanced_schema
 
-    # Keep all existing private methods (_refresh_schema, _parse_operation_details, etc.)
     def _refresh_schema(self):
         """Refresh the database schema information."""
         try:
@@ -191,6 +274,45 @@ class DBAgentConnector:
         except Exception as e:
             logger.error(f"Failed to fetch schema: {e}")
             self.database_schema = {"error": f"Failed to fetch schema: {str(e)}"}
+
+    def _parse_operation_details(self, operation_details: str) -> Dict[str, Any]:
+        """Parse the operation details from the agent into executable parameters."""
+        try:
+            # Try to extract JSON from the text
+            if "```json" in operation_details and "```" in operation_details.split("```json")[1]:
+                json_str = operation_details.split("```json")[1].split("```")[0].strip()
+            elif "```" in operation_details and "```" in operation_details.split("```")[1]:
+                json_str = operation_details.split("```")[1].strip()
+            else:
+                json_str = operation_details
+
+            return json.loads(json_str)
+        except Exception as e:
+            logger.debug(f"JSON parsing failed: {e}, falling back to basic parsing")
+            result = {}
+            operation_lower = operation_details.lower()
+
+            if "select" in operation_lower:
+                result["operation_type"] = "select"
+            elif "insert" in operation_lower:
+                result["operation_type"] = "insert"
+            elif "update" in operation_lower:
+                result["operation_type"] = "update"
+            elif "delete" in operation_lower:
+                result["operation_type"] = "delete"
+            else:
+                result["operation_type"] = "unknown"
+
+            # Extract table name
+            tables = []
+            for table_name in self.database_schema.keys():
+                if table_name.lower() in operation_lower:
+                    tables.append(table_name)
+
+            if tables:
+                result["table"] = tables[0]
+
+            return result
 
     def _format_schema_for_llm(self) -> Dict[str, Any]:
         """Format the database schema in a way that's more digestible for the LLM."""
@@ -241,6 +363,13 @@ class DBAgentConnector:
                     if code.lower().startswith(("select", "insert", "update", "delete")):
                         return code
 
+        if "operation_details" in context and isinstance(context["operation_details"], str):
+            details = context["operation_details"]
+            if "```sql" in details:
+                sql = details.split("```sql")[1].split("```")[0].strip()
+                if sql:
+                    return sql
+
         return None
 
     def _generate_sql_from_llm(self, query: str, schema_info: Dict[str, Any]) -> Optional[str]:
@@ -277,6 +406,7 @@ class DBAgentConnector:
             2. Use conversation context to resolve references like "that table"
             3. Use appropriate filtering, sorting, and limits based on the query
             4. Make sure all table and column names are correct
+            5. For numeric limits mentioned in the query, use those exact numbers
             """
 
             result = llm.invoke(prompt)
@@ -298,7 +428,17 @@ class DBAgentConnector:
             logger.error(f"Error generating SQL from LLM: {e}")
             return None
 
-    def _identify_table_from_query(self, query: str) -> str:
+    def _extract_table_name_from_sql(self, sql: str) -> str:
+        """Extract table name from a SQL query."""
+        sql_lower = sql.lower()
+        if "from" in sql_lower:
+            from_parts = sql_lower.split("from")[1].strip().split()
+            if from_parts:
+                table = from_parts[0].rstrip(',;()')
+                return table
+        return "database"
+
+    def _identify_table_from_query(self, query: str) -> str | None:
         """Identify which table the natural language query is referring to."""
         query_lower = query.lower()
         table_mappings = {}
@@ -337,11 +477,7 @@ class DBAgentConnector:
         elif sql.lower().startswith("delete"):
             operation = "DELETE"
 
-        table_name = "the database"
-        if "from" in sql.lower():
-            from_parts = sql.lower().split("from")[1].strip().split()
-            if from_parts:
-                table_name = from_parts[0].rstrip(',;()')
+        table_name = self._extract_table_name_from_sql(sql) or "the database"
 
         if operation == "SELECT":
             if row_count == 0:
@@ -365,6 +501,7 @@ class DBAgentConnector:
     def execute_natural_language_query(self, query: str, session_id: str = "default") -> Dict[str, Any]:
         """
         Execute a natural language query with session-based memory management.
+        FIXED: Contextual reference resolution now happens before special case handling.
 
         Args:
             query: A natural language query string
@@ -376,25 +513,20 @@ class DBAgentConnector:
         try:
             logger.info(f"Processing query for session {session_id}: {query}")
 
-            # Get or create session
+            # STEP 1: Get or create session FIRST
             session = self._get_or_create_session(session_id)
 
-            # Resolve contextual references using session history
+            # STEP 2: Resolve contextual references using session history BEFORE anything else
             resolved_query = self._resolve_contextual_references(query, session)
             if resolved_query != query:
-                logger.info(f"Resolved query: {resolved_query}")
+                logger.info(f"Resolved query: '{query}' -> '{resolved_query}'")
 
-            # Refresh schema and format for LLM
+            # STEP 3: Refresh schema and format for LLM
             self._refresh_schema()
             formatted_schema = self._format_schema_for_llm()
 
-            # Create context-aware prompt
-            context_aware_schema = self._create_context_aware_prompt(
-                resolved_query, session, formatted_schema
-            )
-
-            # Special case for "Show tables" type queries
-            if "show" in resolved_query.lower() and "table" in resolved_query.lower():
+            # STEP 4: NOW check for special cases (after context resolution)
+            if self._is_table_listing_query(resolved_query):
                 tables = self.db_connector.get_table_names()
                 result = {
                     "success": True,
@@ -405,7 +537,12 @@ class DBAgentConnector:
                 session.add_query(query, result)
                 return result
 
-            # Process with LangGraph agent
+            # STEP 5: Create context-aware prompt
+            context_aware_schema = self._create_context_aware_prompt(
+                resolved_query, session, formatted_schema
+            )
+
+            # STEP 6: Process with LangGraph agent
             try:
                 logger.info("Calling LangGraph agent with context...")
                 agent_result = query_database(resolved_query, context_aware_schema)
@@ -434,7 +571,9 @@ class DBAgentConnector:
                     logger.error(f"Error accessing agent result attributes: {attr_error}")
                     agent_response = str(agent_result)
 
-            # Multi-stage SQL execution (keeping your existing logic)
+            logger.info(f"Agent response: {agent_response[:100]}...")
+
+            # STAGE 1: Try to directly extract SQL from the response or context
             sql_query = self._extract_sql_from_response(agent_response, agent_context)
 
             if sql_query:
@@ -452,8 +591,10 @@ class DBAgentConnector:
                     }
                     session.add_query(query, result)
                     return result
+                else:
+                    logger.error(f"SQL execution failed: {db_result.get('error')}")
 
-            # Stage 2: Generate SQL using LLM with context
+            # STAGE 2: If direct SQL extraction failed, try to generate SQL using LLM with context
             sql_query = self._generate_sql_from_llm(resolved_query, context_aware_schema)
 
             if sql_query:
@@ -472,10 +613,11 @@ class DBAgentConnector:
                     session.add_query(query, result)
                     return result
 
-            # Stage 3: Last resort with session context
+            # STAGE 3: Last resort - try to find mentioned tables and do a basic query with session context
             target_table = session.last_table or self._identify_table_from_query(resolved_query)
             if target_table:
-                limit = 5
+                # Extract numeric values for potential limits
+                limit = 5  # Default
                 for word in resolved_query.lower().split():
                     if word.isdigit() and 1 <= int(word) <= 1000:
                         limit = int(word)
@@ -497,7 +639,7 @@ class DBAgentConnector:
                     session.add_query(query, result)
                     return result
 
-            # If all attempts failed
+            # If all attempts failed, return the agent's response
             result = {
                 "success": False,
                 "agent_response": agent_response or "I couldn't execute your query successfully.",
