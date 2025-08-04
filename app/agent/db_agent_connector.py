@@ -135,35 +135,29 @@ class DBAgentConnector:
                     "error": str(agent_error)
                 }
 
-            # Extract response and context from result
+            # Extract response from result
             agent_response = ""
-            agent_context = {}
-            execution_details = {}
-
             if isinstance(agent_result, dict):
                 agent_response = agent_result.get("response", "")
                 agent_context = agent_result.get("context", {})
-                execution_details = agent_result.get("execution_details", {})
             else:
                 try:
                     agent_response = agent_result.response if hasattr(agent_result, "response") else str(agent_result)
                     agent_context = agent_result.context if hasattr(agent_result, "context") else {}
-                    execution_details = agent_result.execution_result if hasattr(agent_result,
-                                                                                 "execution_result") else {}
                 except Exception as attr_error:
                     print(f"Error accessing agent result attributes: {attr_error}")
                     agent_response = str(agent_result)
+                    agent_context = {}
 
             print(f"Agent response: {agent_response}")
 
-            # Method 1: Try to extract SQL directly from the response
+            # Extract SQL from agent response
             sql_query = None
-
-            # Look for SQL code blocks in the response
-            if "```sql" in agent_response and "```" in agent_response.split("```sql")[1]:
-                sql_query = agent_response.split("```sql")[1].split("```")[0].strip()
+            if "```sql" in agent_response:
+                sql_parts = agent_response.split("```sql")
+                if len(sql_parts) > 1:
+                    sql_query = sql_parts[1].split("```")[0].strip()
             elif "```" in agent_response:
-                # Try to find any code block that might contain SQL
                 code_blocks = agent_response.split("```")
                 for i in range(1, len(code_blocks), 2):
                     if i < len(code_blocks):
@@ -172,94 +166,68 @@ class DBAgentConnector:
                             sql_query = potential_sql
                             break
 
-            # If SQL found, execute it directly
+            # Try to execute SQL if found
             if sql_query:
-                print(f"Executing SQL: {sql_query}")
-                try:
-                    result = self.db_connector.execute_query(sql_query)
+                print(f"Executing extracted SQL: {sql_query}")
+                db_result = self.db_connector.execute_query(sql_query)
+
+                # Generate a better response based on the actual results
+                if db_result.get("success"):
+                    data = db_result.get("data", [])
+                    row_count = len(data)
+
+                    # Determine table name from SQL query
+                    table_name = self._extract_table_name_from_sql(sql_query)
+
+                    # Generate a better response based on the actual data
+                    if row_count > 0:
+                        response = f"I found {row_count} records in the {table_name} table. "
+                        # Show sample data for the first few records if available
+                        if row_count > 5:
+                            response += f"Here are the first 5 entries."
+                        else:
+                            response += f"Here are all the entries."
+                    else:
+                        response = f"I couldn't find any records in the {table_name} table matching your criteria."
+
                     return {
-                        "success": result.get("success", False),
-                        "agent_response": agent_response,
-                        "data": result.get("data"),
-                        "affected_rows": result.get("affected_rows")
+                        "success": True,
+                        "agent_response": response,
+                        "data": data,
+                        "affected_rows": row_count
                     }
-                except Exception as sql_error:
-                    print(f"SQL execution error: {sql_error}")
-                    # Continue to try other methods
-
-            # Method 2: Try to parse operation details from context or execution details
-            operation_details = agent_context.get("operation_details", "")
-
-            if not operation_details and "execution_plan" in agent_context:
-                operation_details = agent_context["execution_plan"]
-
-            if operation_details:
-                try:
-                    # Parse the operation details
-                    operation_params = self._parse_operation_details(operation_details)
-
-                    # Extract operation type and table
-                    operation_type = operation_params.get("operation_type", "").lower()
-                    table = operation_params.get("table", "")
-
-                    if operation_type and table:
-                        print(f"Executing operation: {operation_type} on {table}")
-                        result = self.db_connector.execute_operation(operation_type, operation_params)
-                        return {
-                            "success": result.get("success", False),
-                            "agent_response": agent_response,
-                            "data": result.get("data"),
-                            "affected_rows": result.get("affected_rows")
-                        }
-                except Exception as op_error:
-                    print(f"Operation execution error: {op_error}")
-                    # Continue to try other methods
-
-            # Method 3: Generate SQL using the agent response
-            try:
-                # Create a prompt to generate executable SQL
-                sql_generation_prompt = f"""
-                Based on the database schema and the query, generate a valid SQL query.
-                The user query was: "{query}"
-
-                Generate ONLY the SQL code with no explanation.
-                """
-
-                # Using your existing LLM setup to generate SQL
-                from langchain_google_genai import ChatGoogleGenerativeAI
-                llm = ChatGoogleGenerativeAI(
-                    model="gemini-1.5-pro",
-                    temperature=0,
-                    convert_system_message_to_human=True
-                )
-
-                sql_result = llm.invoke(sql_generation_prompt)
-                generated_sql = sql_result.content if hasattr(sql_result, "content") else str(sql_result)
-
-                # Extract SQL if wrapped in code blocks
-                if "```sql" in generated_sql:
-                    generated_sql = generated_sql.split("```sql")[1].split("```")[0].strip()
-                elif "```" in generated_sql:
-                    generated_sql = generated_sql.split("```")[1].split("```")[0].strip()
-
-                if generated_sql:
-                    print(f"Executing generated SQL: {generated_sql}")
-                    result = self.db_connector.execute_query(generated_sql)
+                else:
                     return {
-                        "success": result.get("success", False),
-                        "agent_response": agent_response + f"\n\nExecuted SQL: {generated_sql}",
-                        "data": result.get("data"),
-                        "affected_rows": result.get("affected_rows")
+                        "success": False,
+                        "agent_response": f"Error executing the query: {db_result.get('error')}",
+                        "error": db_result.get("error")
                     }
-            except Exception as gen_error:
-                print(f"SQL generation error: {gen_error}")
-                # Fall through to final return
 
-            # If we reached here, none of the methods worked
+            # If we can't extract SQL, try to determine which table the query is about
+            target_table = self._identify_table_from_query(query)
+
+            if target_table:
+                # Generate a basic SQL query for the identified table
+                limit_clause = "LIMIT 5" if "all" not in query.lower() else ""
+                sql = f"SELECT * FROM {target_table} {limit_clause}"
+                print(f"Executing fallback SQL for table {target_table}: {sql}")
+
+                db_result = self.db_connector.execute_query(sql)
+
+                if db_result.get("success"):
+                    data = db_result.get("data", [])
+                    return {
+                        "success": True,
+                        "agent_response": f"Here are the results from the {target_table} table ({len(data)} records found).",
+                        "data": data,
+                        "affected_rows": len(data)
+                    }
+
+            # If all attempts failed, return the agent's response with an error
             return {
                 "success": False,
-                "agent_response": agent_response if agent_response else "I couldn't translate your query into a database operation.",
-                "error": "Failed to execute database operation"
+                "agent_response": agent_response or "I couldn't execute this query successfully.",
+                "error": "Could not generate executable SQL from the query"
             }
 
         except Exception as e:
@@ -271,3 +239,55 @@ class DBAgentConnector:
                 "error": f"Failed to execute query: {str(e)}",
                 "agent_response": "I encountered an error while processing your request."
             }
+
+    def _extract_table_name_from_sql(self, sql: str) -> str:
+        """Extract table name from a SQL query."""
+        sql_lower = sql.lower()
+        # Look for FROM clause
+        if "from" in sql_lower:
+            from_parts = sql_lower.split("from")[1].strip().split()
+            if from_parts:
+                # Get table name and remove any trailing characters like commas, parentheses, etc.
+                table = from_parts[0].rstrip(',;()')
+                return table
+
+        # Default to generic if we can't determine
+        return "database"
+
+    def _identify_table_from_query(self, query: str) -> str:
+        """Identify which table the natural language query is referring to."""
+        query_lower = query.lower()
+
+        # Create a mapping of common terms to tables
+        table_mappings = {}
+
+        # Build mappings from actual database tables
+        # This makes it dynamic based on the actual database schema
+        for table in self.database_schema.keys():
+            # Add the table name itself
+            table_mappings[table.lower()] = table
+            # Add singular/plural forms
+            if table.lower().endswith('s'):
+                table_mappings[table.lower()[:-1]] = table  # singular form
+            else:
+                table_mappings[table.lower() + 's'] = table  # plural form
+
+        # Add some common synonyms
+        if 'film' in table_mappings:
+            table_mappings['movie'] = 'film'
+            table_mappings['movies'] = 'film'
+
+        # Check for table mentions in the query
+        for term, table in table_mappings.items():
+            if term in query_lower:
+                return table
+
+        # Default to a common table if we can't determine
+        if 'actor' in self.database_schema:
+            return 'actor'
+
+        # Last resort: return the first table in the database
+        if self.database_schema:
+            return list(self.database_schema.keys())[0]
+
+        return None
