@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from app.agent.db_agent_connector import DBAgentConnector
 import os
+import traceback
+import logging
 
 app = FastAPI(
     title="LangGraph Database Agent API",
@@ -52,32 +54,6 @@ def read_root():
     }
 
 
-# @app.get("/tables")
-# def get_tables(db_agent: DBAgentConnector = Depends(get_db_agent)):
-#     """Get all tables in the database."""
-#     try:
-#         tables = db_agent.db_connector.get_table_names()
-#         return {
-#             "success": True,
-#             "tables": tables
-#         }
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Failed to get tables: {str(e)}")
-
-
-# @app.get("/schema/{table_name}")
-# def get_table_schema(table_name: str, db_agent: DBAgentConnector = Depends(get_db_agent)):
-#     """Get schema for a specific table."""
-#     try:
-#         schema = db_agent.db_connector.get_table_schema(table_name)
-#         return {
-#             "success": True,
-#             "schema": schema
-#         }
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Failed to get schema: {str(e)}")
-
-
 @app.get("/health")
 def health_check(db_agent: DBAgentConnector = Depends(get_db_agent)):
     """Health check endpoint that tests the database connection."""
@@ -91,9 +67,6 @@ def health_check(db_agent: DBAgentConnector = Depends(get_db_agent)):
         "database_connection": "ok"
     }
 
-
-import traceback
-import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -137,116 +110,3 @@ def process_query(request: QueryRequest, db_agent: DBAgentConnector = Depends(ge
         logger.error(f"Error processing query: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
-
-
-# @app.post("/debug-query")
-# def debug_query(request: QueryRequest, db_agent: DBAgentConnector = Depends(get_db_agent)):
-#     """Debug version of the query endpoint with more verbose output."""
-#     if not request.query:
-#         raise HTTPException(status_code=400, detail="Query cannot be empty")
-#
-#     try:
-#         # Test direct LLM connection first
-#         from langchain_google_genai import ChatGoogleGenerativeAI
-#         from langchain.prompts import ChatPromptTemplate
-#
-#         # Simple test of Gemini connection
-#         llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0, convert_system_message_to_human=True)
-#         test_prompt = ChatPromptTemplate.from_messages([
-#             ("human", "You are a helpful assistant. Say hello!")
-#         ])
-#
-#         chain = test_prompt | llm
-#         llm_test_result = chain.invoke({})
-#
-#         # Get the database schema
-#         schema = db_agent.database_schema
-#         schema_sample = {k: {"columns": [c["name"] for c in v["columns"]]}
-#                          for k, v in list(schema.items())[:3]} if schema else {}
-#
-#         # Now try the actual query but catch any errors
-#         result = None
-#         error = None
-#         traceback_info = None
-#
-#         try:
-#             result = db_agent.execute_natural_language_query(request.query)
-#         except Exception as e:
-#             import traceback
-#             error = str(e)
-#             traceback_info = traceback.format_exc()
-#
-#         # Return comprehensive debug info
-#         return {
-#             "query": request.query,
-#             "gemini_test": {
-#                 "success": True,
-#                 "response": llm_test_result.content if hasattr(llm_test_result, "content") else str(llm_test_result)
-#             },
-#             "database_schema_sample": schema_sample,
-#             "schema_tables_count": len(schema) if schema else 0,
-#             "result": result,
-#             "error": error,
-#             "traceback": traceback_info
-#         }
-#     except Exception as e:
-#         import traceback
-#         return {
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }
-
-@app.post("/direct-sql")
-def execute_direct_sql(request: dict):
-    """Execute SQL directly for debugging purposes."""
-    if "sql" not in request:
-        raise HTTPException(status_code=400, detail="SQL query is required")
-
-    try:
-        # Get the DB connector from the agent
-        db_agent = get_db_agent()
-
-        # Execute the SQL directly
-        result = db_agent.db_connector.execute_query(request["sql"])
-
-        return {
-            "success": result.get("success", False),
-            "data": result.get("data"),
-            "affected_rows": result.get("affected_rows", 0),
-            "error": result.get("error")
-        }
-    except Exception as e:
-        import traceback
-        return {
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }
-
-
-@app.post("/direct-sql")
-def execute_direct_sql(request: dict):
-    """Execute SQL directly for debugging purposes."""
-    if "sql" not in request:
-        raise HTTPException(status_code=400, detail="SQL query is required")
-
-    try:
-        # Get the DB connector from the agent
-        db_agent = get_db_agent()
-
-        # Execute the SQL directly
-        result = db_agent.db_connector.execute_query(request["sql"])
-
-        return {
-            "success": result.get("success", False),
-            "data": result.get("data"),
-            "affected_rows": result.get("affected_rows", 0),
-            "error": result.get("error")
-        }
-    except Exception as e:
-        import traceback
-        return {
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }
