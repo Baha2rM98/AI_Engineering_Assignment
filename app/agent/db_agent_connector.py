@@ -513,6 +513,14 @@ class DBAgentConnector:
         try:
             logger.info(f"Processing query for session {session_id}: {query}")
 
+            # ULTRA-QUICK GARBAGE DETECTION - Add this ONE block:
+            if len(query.strip()) > 15 and not any(c in 'aeiou ' for c in query.lower()[:20]):
+                return {
+                    "success": False,
+                    "agent_response": "Please provide a valid database query.",
+                    "error": "Invalid query format"
+                }
+
             # STEP 1: Get or create session FIRST
             session = self._get_or_create_session(session_id)
 
