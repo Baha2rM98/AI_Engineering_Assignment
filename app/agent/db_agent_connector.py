@@ -76,9 +76,29 @@ class ConversationSession:
     def _extract_table_from_sql(self, sql: str):
         """Extract and remember the table name from SQL."""
         if sql:
-            sql_lower = sql.lower()
+            sql_lower = sql.lower().strip()
+
+            # Handle SELECT statements
             if "from" in sql_lower:
                 parts = sql_lower.split("from")[1].strip().split()
+                if parts:
+                    self.last_table = parts[0].rstrip(',;()')
+
+            # Handle INSERT statements
+            elif sql_lower.startswith("insert into"):
+                parts = sql_lower.split("insert into")[1].strip().split()
+                if parts:
+                    self.last_table = parts[0].rstrip(',;()')
+
+            # Handle UPDATE statements
+            elif sql_lower.startswith("update"):
+                parts = sql_lower.split("update")[1].strip().split()
+                if parts:
+                    self.last_table = parts[0].rstrip(',;()')
+
+            # Handle DELETE statements
+            elif sql_lower.startswith("delete from"):
+                parts = sql_lower.split("delete from")[1].strip().split()
                 if parts:
                     self.last_table = parts[0].rstrip(',;()')
 
