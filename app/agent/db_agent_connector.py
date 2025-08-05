@@ -77,8 +77,21 @@ class ConversationSession:
         """Extract and remember the table name from SQL."""
         if sql:
             sql_lower = sql.lower()
+
+            # Handle different SQL statement types
             if "from" in sql_lower:
+                # For SELECT statements
                 parts = sql_lower.split("from")[1].strip().split()
+                if parts:
+                    self.last_table = parts[0].rstrip(',;()')
+            elif sql_lower.strip().startswith("insert into"):
+                # For INSERT statements
+                parts = sql_lower.split("insert into")[1].strip().split()
+                if parts:
+                    self.last_table = parts[0].rstrip(',;()')
+            elif sql_lower.strip().startswith("update"):
+                # For UPDATE statements
+                parts = sql_lower.split("update")[1].strip().split()
                 if parts:
                     self.last_table = parts[0].rstrip(',;()')
 
