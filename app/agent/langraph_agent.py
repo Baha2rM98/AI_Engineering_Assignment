@@ -186,9 +186,6 @@ def initialize_agent():
             state.error = f"Failed to create execution plan: {str(e)}"
             return state
 
-    # The rest of the code remains the same...
-    # [Keep all remaining functions and workflow definitions as they were]
-
     # 3. Query execution node
     def execute_plan(state: AgentState) -> AgentState:
         """Execute the plan against the database."""
