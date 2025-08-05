@@ -488,9 +488,12 @@ class DBAgentConnector:
 
         return None
 
-    def _generate_result_message(self, query: str, sql: str, data: List[Dict[str, Any]]) -> str:
+    def _generate_result_message(self, query: str, sql: str, data: List[Dict[str, Any]],
+                                 affected_rows: int = None) -> str:
         """Generate appropriate response message based on the query and results."""
-        row_count = len(data)
+        if affected_rows is None:
+            affected_rows = len(data)
+
         operation = "SELECT"
         if sql.lower().startswith("insert"):
             operation = "INSERT"
@@ -502,23 +505,23 @@ class DBAgentConnector:
         table_name = self._extract_table_name_from_sql(sql) or "the database"
 
         if operation == "SELECT":
-            if row_count == 0:
+            if affected_rows == 0:
                 return f"I couldn't find any matching records in {table_name} for your query."
-            elif row_count == 1:
+            elif affected_rows == 1:
                 return f"I found 1 record in {table_name} that matches your query."
             else:
-                if "limit" in sql.lower() and row_count < 20:
-                    return f"Here are the {row_count} records you requested from {table_name}."
+                if "limit" in sql.lower() and affected_rows < 20:
+                    return f"Here are the {affected_rows} records you requested from {table_name}."
                 else:
-                    return f"I found {row_count} records in {table_name} that match your query."
+                    return f"I found {affected_rows} records in {table_name} that match your query."
         elif operation == "INSERT":
-            return f"Successfully inserted {row_count} record(s) into {table_name}."
+            return f"Successfully inserted {affected_rows} record(s) into {table_name}."
         elif operation == "UPDATE":
-            return f"Successfully updated {row_count} record(s) in {table_name}."
+            return f"Successfully updated {affected_rows} record(s) in {table_name}."
         elif operation == "DELETE":
-            return f"Successfully deleted {row_count} record(s) from {table_name}."
+            return f"Successfully deleted {affected_rows} record(s) from {table_name}."
         else:
-            return f"Query executed successfully. Affected {row_count} record(s)."
+            return f"Query executed successfully. Affected {affected_rows} record(s)."
 
     def execute_natural_language_query(self, query: str, session_id: str = "default") -> Dict[str, Any]:
         """
@@ -612,11 +615,12 @@ class DBAgentConnector:
 
                 if db_result.get("success"):
                     data = db_result.get("data", [])
+                    affected_rows = db_result.get("affected_rows", 0)  # Get from DB result
                     result = {
                         "success": True,
-                        "agent_response": self._generate_result_message(resolved_query, sql_query, data),
+                        "agent_response": self._generate_result_message(resolved_query, sql_query, data, affected_rows),
                         "data": data,
-                        "affected_rows": len(data),
+                        "affected_rows": affected_rows,  # Use DB result
                         "sql_query": sql_query
                     }
                     session.add_query(query, result)
@@ -633,11 +637,12 @@ class DBAgentConnector:
 
                 if db_result.get("success"):
                     data = db_result.get("data", [])
+                    affected_rows = db_result.get("affected_rows", 0)  # Get from DB result
                     result = {
                         "success": True,
-                        "agent_response": self._generate_result_message(resolved_query, sql_query, data),
+                        "agent_response": self._generate_result_message(resolved_query, sql_query, data, affected_rows),
                         "data": data,
-                        "affected_rows": len(data),
+                        "affected_rows": affected_rows,  # Use DB result
                         "sql_query": sql_query
                     }
                     session.add_query(query, result)
