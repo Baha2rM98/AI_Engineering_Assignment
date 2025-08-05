@@ -301,7 +301,9 @@ Execute a natural language database query.
             "title": "Academy Dinosaur",
             "rating": "PG"
         },
-       ...
+       {
+          etc...
+       },
     ],
     "affected_rows": 195,
     "session_id": "user123"
@@ -519,10 +521,6 @@ We welcome contributions! Please follow these guidelines:
 - **Security Features**: Authentication, authorization, and audit logging
 
 ---
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
