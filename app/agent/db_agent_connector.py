@@ -389,32 +389,94 @@ class DBAgentConnector:
 
     def _extract_sql_from_response(self, response: str, context: Dict[str, Any]) -> Optional[str]:
         """Extract SQL from agent response or context."""
+        # Check context first
         if "sql_query" in context:
             return context["sql_query"]
 
-        if "```sql" in response:
+        # Look for SQL code blocks
+        if "```sql" in response.lower():
             parts = response.split("```sql")
             if len(parts) > 1:
                 sql = parts[1].split("```")[0].strip()
                 if sql:
                     return sql
 
+        # Look for any code blocks that might contain SQL
         if "```" in response:
             parts = response.split("```")
             for i in range(1, len(parts), 2):
                 if i < len(parts):
                     code = parts[i].strip()
+                    # Check if it starts with common SQL keywords
                     if code.lower().startswith(("select", "insert", "update", "delete")):
                         return code
 
+        # Look in operation_details
         if "operation_details" in context and isinstance(context["operation_details"], str):
             details = context["operation_details"]
-            if "```sql" in details:
+            if "```sql" in details.lower():
                 sql = details.split("```sql")[1].split("```")[0].strip()
                 if sql:
                     return sql
+            # Also check for INSERT statements without code blocks
+            if "insert into" in details.lower():
+                lines = details.split('\n')
+                for line in lines:
+                    if line.strip().lower().startswith("insert into"):
+                        return line.strip()
 
         return None
+
+    # Add this method to db_agent_connector.py:
+    def _generate_insert_sql_from_llm(self, query: str, schema_info: Dict[str, Any]) -> Optional[str]:
+        """Generate INSERT SQL specifically for insert operations."""
+        try:
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-1.5-pro",
+                temperature=0,
+                convert_system_message_to_human=True
+            )
+
+            # Get actor table schema for reference
+            actor_schema = "actor (actor_id SERIAL PRIMARY KEY, first_name VARCHAR(45) NOT NULL, last_name VARCHAR(45) NOT NULL, last_update TIMESTAMP DEFAULT NOW())"
+
+            prompt = f"""
+            Generate a PostgreSQL INSERT statement for this request: "{query}"
+
+            Important table schemas:
+            - {actor_schema}
+            - customer (customer_id SERIAL PRIMARY KEY, store_id SMALLINT NOT NULL DEFAULT 1, first_name VARCHAR(45) NOT NULL, last_name VARCHAR(45) NOT NULL, email VARCHAR(50), address_id SMALLINT NOT NULL DEFAULT 1, activebool BOOLEAN DEFAULT true, create_date DATE DEFAULT CURRENT_DATE, last_update TIMESTAMP DEFAULT NOW(), active INTEGER DEFAULT 1)
+
+            Rules:
+            1. Generate ONLY the INSERT SQL statement
+            2. Include all required fields (NOT NULL fields without defaults)
+            3. Use appropriate default values for optional fields
+            4. Do not include auto-increment primary key fields
+            5. End with semicolon
+            6. No explanations or markdown formatting
+
+            Example for "Insert actor John Doe":
+            INSERT INTO actor (first_name, last_name) VALUES ('John', 'Doe');
+            """
+
+            result = llm.invoke(prompt)
+            sql = result.content if hasattr(result, "content") else str(result)
+
+            # Clean up the SQL
+            sql = sql.strip()
+            if sql.startswith("```sql"):
+                sql = sql.replace("```sql", "", 1)
+            if sql.endswith("```"):
+                sql = sql[:-3]
+            sql = sql.strip()
+
+            if sql.lower().startswith("insert"):
+                return sql
+
+            return None
+        except Exception as e:
+            logger.error(f"Error generating INSERT SQL: {e}")
+            return None
 
     def _generate_sql_from_llm(self, query: str, schema_info: Dict[str, Any]) -> Optional[str]:
         """Generate SQL directly using the LLM with context awareness."""
@@ -508,9 +570,15 @@ class DBAgentConnector:
 
         return None
 
-    def _generate_result_message(self, query: str, sql: str, data: List[Dict[str, Any]]) -> str:
+    def _generate_result_message(self, query: str, sql: str, data: List[Dict[str, Any]],
+                                 affected_rows: int = None) -> str:
         """Generate appropriate response message based on the query and results."""
-        row_count = len(data)
+        # Use affected_rows if provided, otherwise fall back to len(data)
+        if affected_rows is not None:
+            row_count = affected_rows
+        else:
+            row_count = len(data)
+
         operation = "SELECT"
         if sql.lower().startswith("insert"):
             operation = "INSERT"
@@ -632,17 +700,43 @@ class DBAgentConnector:
 
                 if db_result.get("success"):
                     data = db_result.get("data", [])
+                    actual_affected_rows = db_result.get("affected_rows", len(data))
                     result = {
                         "success": True,
-                        "agent_response": self._generate_result_message(resolved_query, sql_query, data),
+                        "agent_response": self._generate_result_message(resolved_query, sql_query, data,
+                                                                        actual_affected_rows),
                         "data": data,
-                        "affected_rows": len(data),
+                        "affected_rows": actual_affected_rows,
                         "sql_query": sql_query
                     }
                     session.add_query(query, result)
                     return result
                 else:
                     logger.error(f"SQL execution failed: {db_result.get('error')}")
+
+            # STAGE 1.5: Special handling for INSERT operations
+            if "insert" in resolved_query.lower() and not sql_query:
+                logger.info("Detected INSERT operation, trying specialized SQL generation...")
+                sql_query = self._generate_insert_sql_from_llm(resolved_query, context_aware_schema)
+
+                if sql_query:
+                    logger.info(f"Generated INSERT SQL: {sql_query}")
+                    db_result = self.db_connector.execute_query(sql_query)
+
+                    if db_result.get("success"):
+                        affected_rows = db_result.get("affected_rows", 0)
+                        table_name = self._extract_table_name_from_sql(sql_query) or "the database"
+                        result = {
+                            "success": True,
+                            "agent_response": f"Successfully inserted {affected_rows} record(s) into {table_name}.",
+                            "data": [],
+                            "affected_rows": affected_rows,
+                            "sql_query": sql_query
+                        }
+                        session.add_query(query, result)
+                        return result
+                    else:
+                        logger.error(f"INSERT execution failed: {db_result.get('error')}")
 
             # STAGE 2: If direct SQL extraction failed, try to generate SQL using LLM with context
             sql_query = self._generate_sql_from_llm(resolved_query, context_aware_schema)
@@ -653,11 +747,13 @@ class DBAgentConnector:
 
                 if db_result.get("success"):
                     data = db_result.get("data", [])
+                    actual_affected_rows = db_result.get("affected_rows", len(data))
                     result = {
                         "success": True,
-                        "agent_response": self._generate_result_message(resolved_query, sql_query, data),
+                        "agent_response": self._generate_result_message(resolved_query, sql_query, data,
+                                                                        actual_affected_rows),
                         "data": data,
-                        "affected_rows": len(data),
+                        "affected_rows": actual_affected_rows,
                         "sql_query": sql_query
                     }
                     session.add_query(query, result)
