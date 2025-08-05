@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="LangGraph Database Agent API",
     description="API for natural language database interactions using LangGraph with Memory Management",
-    version="2.0.0"
+    version="1.0.0"
 )
 
 # Global instance of the DB agent connector
