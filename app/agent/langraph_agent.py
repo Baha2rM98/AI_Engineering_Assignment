@@ -30,7 +30,40 @@ def initialize_agent():
     You can interpret user queries, develop plans to retrieve or modify data, and execute those plans.
 
     DATABASE INFORMATION:
-    {database_info}
+        SAKILA DVD RENTAL DATABASE SCHEMA:
+    
+        MAIN TABLES:
+        - actor (actor_id, first_name, last_name, last_update)
+        - film (film_id, title, description, release_year, language_id, rental_duration, rental_rate, length, replacement_cost, rating, special_features, last_update)
+        - customer (customer_id, store_id, first_name, last_name, email, address_id, activebool, create_date, last_update, active)
+        - rental (rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update)
+        - payment (payment_id, customer_id, staff_id, rental_id, amount, payment_date)
+        - inventory (inventory_id, film_id, store_id, last_update)
+        - store (store_id, manager_staff_id, address_id, last_update)
+        - staff (staff_id, first_name, last_name, address_id, email, store_id, active, username, password, last_update)
+    
+        RELATIONSHIP TABLES:
+        - film_actor (actor_id, film_id, last_update) - Links films to actors
+        - film_category (film_id, category_id, last_update) - Links films to categories
+    
+        REFERENCE TABLES:
+        - category (category_id, name, last_update)
+        - language (language_id, name, last_update)
+        - address (address_id, address, address2, district, city_id, postal_code, phone, last_update)
+        - city (city_id, city, country_id, last_update)
+        - country (country_id, country, last_update)
+    
+        VIEWS:
+        - actor_info, customer_list, film_list, staff_list, sales_by_film_category, sales_by_store
+    
+        RATING ENUM: 'G', 'PG', 'PG-13', 'R', 'NC-17'
+    
+        COMMON QUERY PATTERNS:
+        - Films by rating: WHERE rating = 'PG-13'
+        - Actor search: WHERE first_name LIKE 'John%' 
+        - Active customers: WHERE activebool = true
+        - Recent rentals: WHERE rental_date > '2005-01-01'
+        - Customer payments: JOIN customer ON payment.customer_id = customer.customer_id
 
     Important instructions:
     1. When asked about tables, make sure to reference ALL tables from the database
@@ -41,11 +74,9 @@ def initialize_agent():
     Your goal is to understand what the user wants to do with the database and help them accomplish it.
     """
 
-    # Rest of the agent implementation remains the same
     workflow = StateGraph(AgentState)
 
     # Define the nodes
-
     # 1. Query understanding node
     def understand_query(state: AgentState) -> AgentState:
         """Parse and understand the user's natural language query."""
@@ -78,7 +109,40 @@ def initialize_agent():
             Your job is to convert natural language database requests into a sequence of specific operations.
 
             For the database with the following structure:
-            {database_info}
+                SAKILA DVD RENTAL DATABASE SCHEMA:
+    
+                MAIN TABLES:
+                - actor (actor_id, first_name, last_name, last_update)
+                - film (film_id, title, description, release_year, language_id, rental_duration, rental_rate, length, replacement_cost, rating, special_features, last_update)
+                - customer (customer_id, store_id, first_name, last_name, email, address_id, activebool, create_date, last_update, active)
+                - rental (rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update)
+                - payment (payment_id, customer_id, staff_id, rental_id, amount, payment_date)
+                - inventory (inventory_id, film_id, store_id, last_update)
+                - store (store_id, manager_staff_id, address_id, last_update)
+                - staff (staff_id, first_name, last_name, address_id, email, store_id, active, username, password, last_update)
+            
+                RELATIONSHIP TABLES:
+                - film_actor (actor_id, film_id, last_update) - Links films to actors
+                - film_category (film_id, category_id, last_update) - Links films to categories
+            
+                REFERENCE TABLES:
+                - category (category_id, name, last_update)
+                - language (language_id, name, last_update)
+                - address (address_id, address, address2, district, city_id, postal_code, phone, last_update)
+                - city (city_id, city, country_id, last_update)
+                - country (country_id, country, last_update)
+            
+                VIEWS:
+                - actor_info, customer_list, film_list, staff_list, sales_by_film_category, sales_by_store
+            
+                RATING ENUM: 'G', 'PG', 'PG-13', 'R', 'NC-17'
+            
+                COMMON QUERY PATTERNS:
+                - Films by rating: WHERE rating = 'PG-13'
+                - Actor search: WHERE first_name LIKE 'John%' 
+                - Active customers: WHERE activebool = true
+                - Recent rentals: WHERE rental_date > '2005-01-01'
+                - Customer payments: JOIN customer ON payment.customer_id = customer.customer_id
 
             Create a detailed plan that includes:
             1. The type of operation (select, insert, update, delete)
@@ -139,7 +203,40 @@ def initialize_agent():
             for the database connector.
 
             The database has the following structure:
-            {database_info}
+                SAKILA DVD RENTAL DATABASE SCHEMA:
+
+                MAIN TABLES:
+                - actor (actor_id, first_name, last_name, last_update)
+                - film (film_id, title, description, release_year, language_id, rental_duration, rental_rate, length, replacement_cost, rating, special_features, last_update)
+                - customer (customer_id, store_id, first_name, last_name, email, address_id, activebool, create_date, last_update, active)
+                - rental (rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update)
+                - payment (payment_id, customer_id, staff_id, rental_id, amount, payment_date)
+                - inventory (inventory_id, film_id, store_id, last_update)
+                - store (store_id, manager_staff_id, address_id, last_update)
+                - staff (staff_id, first_name, last_name, address_id, email, store_id, active, username, password, last_update)
+            
+                RELATIONSHIP TABLES:
+                - film_actor (actor_id, film_id, last_update) - Links films to actors
+                - film_category (film_id, category_id, last_update) - Links films to categories
+            
+                REFERENCE TABLES:
+                - category (category_id, name, last_update)
+                - language (language_id, name, last_update)
+                - address (address_id, address, address2, district, city_id, postal_code, phone, last_update)
+                - city (city_id, city, country_id, last_update)
+                - country (country_id, country, last_update)
+            
+                VIEWS:
+                - actor_info, customer_list, film_list, staff_list, sales_by_film_category, sales_by_store
+            
+                RATING ENUM: 'G', 'PG', 'PG-13', 'R', 'NC-17'
+            
+                COMMON QUERY PATTERNS:
+                - Films by rating: WHERE rating = 'PG-13'
+                - Actor search: WHERE first_name LIKE 'John%' 
+                - Active customers: WHERE activebool = true
+                - Recent rentals: WHERE rental_date > '2005-01-01'
+                - Customer payments: JOIN customer ON payment.customer_id = customer.customer_id
 
             Parse the execution plan and extract the exact parameters needed for:
             - operation_type (select, insert, update, delete)
