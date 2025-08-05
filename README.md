@@ -55,26 +55,43 @@ The LangGraph Database Agent is a sophisticated AI-powered system that enables n
 
 ## 🏛️ Architecture
 
-The system follows a multi-stage LangGraph workflow:
+[//]: # ()
+[//]: # (The system follows a multi-stage LangGraph workflow:)
 
-```mermaid
-graph TD
-    A[Natural Language Query] --> B[Query Understanding]
-    B --> C[Execution Planning]
-    C --> D[SQL Generation]
-    D --> E[Database Execution]
-    E --> F[Response Formulation]
-    F --> G[Natural Language Response]
-    
-    H[Session Memory] --> B
-    H --> C
-    H --> F
-    
-    I[Error Handler] --> B
-    I --> C
-    I --> D
-    I --> E
-```
+[//]: # ()
+[//]: # (```mermaid)
+
+[//]: # (graph TD)
+
+[//]: # (    A[Natural Language Query] --> B[Query Understanding])
+
+[//]: # (    B --> C[Execution Planning])
+
+[//]: # (    C --> D[SQL Generation])
+
+[//]: # (    D --> E[Database Execution])
+
+[//]: # (    E --> F[Response Formulation])
+
+[//]: # (    F --> G[Natural Language Response])
+
+[//]: # (    )
+[//]: # (    H[Session Memory] --> B)
+
+[//]: # (    H --> C)
+
+[//]: # (    H --> F)
+
+[//]: # (    )
+[//]: # (    I[Error Handler] --> B)
+
+[//]: # (    I --> C)
+
+[//]: # (    I --> D)
+
+[//]: # (    I --> E)
+
+[//]: # (```)
 
 ### Core Components
 
@@ -153,7 +170,6 @@ cp .env.example .env
 5. **Initialize database**
 ```bash
 # Set up PostgreSQL with Sakila sample database
-# Instructions available in docs/database-setup.md
 ```
 
 6. **Run the application**
@@ -284,7 +300,8 @@ Execute a natural language database query.
             "film_id": 1,
             "title": "Academy Dinosaur",
             "rating": "PG"
-        }
+        },
+       ...
     ],
     "affected_rows": 195,
     "session_id": "user123"
@@ -297,7 +314,7 @@ Check system health and database connectivity.
 **Response:**
 ```json
 {
-    "status": "healthy",
+    "status": "connected",
     "database_connection": "ok",
     "active_sessions": 5
 }
@@ -319,11 +336,6 @@ Get detailed session information.
 }
 ```
 
-### Interactive API Documentation
-
-Once running, visit:
-- **Swagger UI**: `http://localhost:8000/docs`
-- **ReDoc**: `http://localhost:8000/redoc`
 
 ## 🗄️ Database Schema
 
@@ -522,7 +534,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Contact
 
-**Baha Rami** - [GitHub](https://github.com/Baha2rM98)
+**Baha2r** - [GitHub](https://github.com/Baha2rM98)
 
 Project Link: [https://github.com/Baha2rM98/AI_Engineering_Assignment](https://github.com/Baha2rM98/AI_Engineering_Assignment)
 
