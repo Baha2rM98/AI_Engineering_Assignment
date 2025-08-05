@@ -5,15 +5,16 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    network_mode: host
+    ports:
+      - "8000:8000"
     environment:
-      - DB_HOST=localhost
-      - DB_PORT=5432
+      - DB_HOST=172.17.0.1  # Docker bridge IP for Linux
+      - DB_PORT=5433
       - DB_USER=postgres
       - DB_PASSWORD=fuckoff
       - DB_NAME=sakila
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - HOST=127.0.0.1
+      - HOST=0.0.0.0
       - PORT=8000
       - LOG_LEVEL=INFO
     volumes:
