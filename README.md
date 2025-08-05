@@ -392,14 +392,7 @@ AI_Engineering_Assignment/
 
 ```bash
 # Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=app tests/
-
-# Run specific test categories
-pytest tests/test_agent.py -v
-pytest tests/test_api.py -v
+pytest -v
 ```
 
 ### Code Quality
