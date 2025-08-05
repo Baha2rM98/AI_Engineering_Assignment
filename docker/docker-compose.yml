@@ -8,12 +8,12 @@ services:
     network_mode: host
     environment:
       - DB_HOST=localhost
-      - DB_PORT=5433
+      - DB_PORT=5432
       - DB_USER=postgres
       - DB_PASSWORD=fuckoff
       - DB_NAME=sakila
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - HOST=0.0.0.0
+      - HOST=127.0.0.1
       - PORT=8000
       - LOG_LEVEL=INFO
     volumes:
