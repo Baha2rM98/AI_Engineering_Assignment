@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from threading import Lock
 from app.database.db_connector import DatabaseConnector
 from app.agent.langraph_agent import query_database
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 logger = logging.getLogger(__name__)
 
@@ -398,8 +399,6 @@ class DBAgentConnector:
     def _generate_sql_from_llm(self, query: str, schema_info: Dict[str, Any]) -> Optional[str]:
         """Generate SQL directly using the LLM with context awareness."""
         try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-
             llm = ChatGoogleGenerativeAI(
                 model="gemini-1.5-pro",
                 temperature=0,
