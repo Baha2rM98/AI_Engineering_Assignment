@@ -203,48 +203,23 @@ def initialize_agent():
                 SAKILA DVD RENTAL DATABASE SCHEMA:
 
                 MAIN TABLES:
-                - actor (actor_id, first_name, last_name, last_update)
-                - film (film_id, title, description, release_year, language_id, rental_duration, rental_rate, length, replacement_cost, rating, special_features, last_update)
-                - customer (customer_id, store_id, first_name, last_name, email, address_id, activebool, create_date, last_update, active)
-                - rental (rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update)
-                - payment (payment_id, customer_id, staff_id, rental_id, amount, payment_date)
-                - inventory (inventory_id, film_id, store_id, last_update)
-                - store (store_id, manager_staff_id, address_id, last_update)
-                - staff (staff_id, first_name, last_name, address_id, email, store_id, active, username, password, last_update)
-            
-                RELATIONSHIP TABLES:
-                - film_actor (actor_id, film_id, last_update) - Links films to actors
-                - film_category (film_id, category_id, last_update) - Links films to categories
-            
-                REFERENCE TABLES:
-                - category (category_id, name, last_update)
-                - language (language_id, name, last_update)
-                - address (address_id, address, address2, district, city_id, postal_code, phone, last_update)
-                - city (city_id, city, country_id, last_update)
-                - country (country_id, country, last_update)
-            
-                VIEWS:
-                - actor_info, customer_list, film_list, staff_list, sales_by_film_category, sales_by_store
-            
-                RATING ENUM: 'G', 'PG', 'PG-13', 'R', 'NC-17'
-            
-                COMMON QUERY PATTERNS:
-                - Films by rating: WHERE rating = 'PG-13'
-                - Actor search: WHERE first_name LIKE 'John%' 
-                - Active customers: WHERE activebool = true
-                - Recent rentals: WHERE rental_date > '2005-01-01'
-                - Customer payments: JOIN customer ON payment.customer_id = customer.customer_id
+                - actor (actor_id SERIAL PRIMARY KEY, first_name VARCHAR(45) NOT NULL, last_name VARCHAR(45) NOT NULL, last_update TIMESTAMP)
+                - customer (customer_id SERIAL PRIMARY KEY, store_id SMALLINT NOT NULL, first_name VARCHAR(45) NOT NULL, last_name VARCHAR(45) NOT NULL, email VARCHAR(50), address_id SMALLINT NOT NULL, activebool BOOLEAN DEFAULT true, create_date DATE, last_update TIMESTAMP, active INTEGER)
 
-            Parse the execution plan and extract the exact parameters needed for:
-            - operation_type (select, insert, update, delete)
-            - table name
-            - columns/fields
-            - conditions
-            - values (for insert/update)
+            For INSERT operations, you MUST generate a complete INSERT SQL statement.
 
-            Format your response as a valid JSON object or SQL query.
-            If using JSON, include at least operation_type and table fields.
-            If using SQL, provide the complete SQL statement that can be executed directly.
+            Examples:
+            - For "Insert a new actor named John Doe":
+              INSERT INTO actor (first_name, last_name) VALUES ('John', 'Doe');
+
+            - For "Add a customer named Jane Smith with email jane@test.com":
+              INSERT INTO customer (store_id, first_name, last_name, email, address_id) VALUES (1, 'Jane', 'Smith', 'jane@test.com', 1);
+
+            CRITICAL: 
+            1. Always wrap the SQL in ```sql code blocks
+            2. Include all required fields based on the table schema
+            3. Use appropriate default values for optional fields
+            4. Make sure the SQL ends with a semicolon
             """),
             ("user", "Execution plan: {execution_plan}")
         ])
