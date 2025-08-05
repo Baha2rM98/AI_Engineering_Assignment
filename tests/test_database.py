@@ -98,8 +98,9 @@ class TestDatabaseConnector:
         result = connector.execute_query("INSERT INTO users (name) VALUES ('John')")
 
         assert result["success"] is True
-        assert "data" not in result
+        assert result["data"] == []  # Changed: INSERT returns empty data array
         assert result["affected_rows"] == 1
+        assert result["operation_type"] == "insert"  # Added: verify operation type
 
     @patch('app.database.db_connector.create_engine')
     def test_execute_query_with_parameters(self, mock_create_engine):
