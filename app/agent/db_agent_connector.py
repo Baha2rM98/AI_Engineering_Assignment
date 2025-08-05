@@ -20,6 +20,8 @@ class ConversationSession:
         self.last_table = None
         self.last_operation = None
         self.last_sql = None
+        self.last_filter = None  # ADD THIS
+        self.last_result_count = None  # ADD THIS
         self.created_at = datetime.now()
         self.last_activity = datetime.now()
         self.max_history = max_history
@@ -33,6 +35,11 @@ class ConversationSession:
             # Try to extract table name from the result
             if "sql_query" in result:
                 self._extract_table_from_sql(result["sql_query"])
+                self._extract_filter_from_sql(result["sql_query"])  # ADD THIS
+
+            # Store result count for context
+            if "data" in result and isinstance(result["data"], list):
+                self.last_result_count = len(result["data"])
 
             # Remember the operation type
             if "operation_type" in result:
@@ -53,6 +60,17 @@ class ConversationSession:
         # Maintain history limit
         if len(self.history) > self.max_history:
             self.history = self.history[-self.max_history:]
+
+    def _extract_filter_from_sql(self, sql: str):
+        """Extract and remember the filter conditions from SQL."""
+        if sql and "where" in sql.lower():
+            try:
+                where_part = sql.lower().split("where")[1].split("order by")[0].split("limit")[0].strip()
+                self.last_filter = where_part
+            except:
+                self.last_filter = None
+        else:
+            self.last_filter = None
 
     def _extract_table_from_sql(self, sql: str):
         """Extract and remember the table name from SQL."""
@@ -167,34 +185,73 @@ class DBAgentConnector:
             if query_lower == pattern or query_lower.startswith(pattern):
                 return True
 
-        # Additional check: "show" + "table" but NOT contextual references
-        if "show" in query_lower and "table" in query_lower:
-            # Exclude contextual references
-            contextual_references = [
-                "that table",
-                "the same table",
-                "this table",
-                "from that table",
-                "from the same table",
-                "from this table"
-            ]
+        # FIXED: Check for contextual references FIRST, then explicit table listing
+        contextual_references = [
+            "that table",
+            "the same table",
+            "this table",
+            "from that table",
+            "from the same table",
+            "from this table"
+        ]
 
-            for ref in contextual_references:
-                if ref in query_lower:
-                    return False  # This is a contextual reference, not table listing
+        # If it's a contextual reference, it's NOT a table listing
+        for ref in contextual_references:
+            if ref in query_lower:
+                return False
 
-            # If it contains "show" and "table" but no contextual references,
-            # it might be a table listing request
+        # Only allow very specific "show table" patterns (not "show ... table")
+        if query_lower in ["show table", "show the table", "list table", "list the table"]:
             return True
 
         return False
 
     def _resolve_contextual_references(self, query: str, session: ConversationSession) -> str:
-        """Enhanced contextual reference resolution."""
+        """Enhanced contextual reference resolution with filter context."""
         query_lower = query.lower()
         resolved_query = query
 
-        # Handle table references with more variations
+        # Handle count/quantity references with filter context
+        quantity_queries = [
+            "how many?",
+            "count them",
+            "how many are there?",
+            "what's the count?",
+            "give me the count"
+        ]
+
+        if query_lower.strip() in quantity_queries and session.last_table:
+            if session.last_filter:
+                # Count with previous filter
+                resolved_query = f"Count records in the {session.last_table} table where {session.last_filter}"
+            else:
+                # Count all records
+                resolved_query = f"Count all records in the {session.last_table} table"
+            logger.info(f"Resolved count query with filter context: {session.last_filter}")
+
+        # Handle "show me more/first N" with filter context
+        limit_patterns = ["show me the first", "just show me the first", "show first", "first"]
+
+        for pattern in limit_patterns:
+            if pattern in query_lower:
+                # Extract number
+                words = query.split()
+                limit_num = 5  # default
+                for i, word in enumerate(words):
+                    if word.isdigit():
+                        limit_num = int(word)
+                        break
+
+                if session.last_table:
+                    if session.last_filter:
+                        # Apply previous filter
+                        resolved_query = f"Show me the first {limit_num} records from the {session.last_table} table where {session.last_filter}"
+                    else:
+                        resolved_query = f"Show me the first {limit_num} records from the {session.last_table} table"
+                    logger.info(f"Resolved limit query with filter context: {session.last_filter}")
+                    break
+
+        # Handle table references (existing logic)
         table_references = [
             "that table",
             "the same table",
@@ -205,50 +262,14 @@ class DBAgentConnector:
         ]
 
         if session.last_table and any(ref in query_lower for ref in table_references):
-            # Replace all variations
             for ref in table_references:
                 if ref in query_lower:
-                    # More natural replacement
                     if "from" in ref:
                         replacement = f"from the {session.last_table} table"
                     else:
                         replacement = f"the {session.last_table} table"
                     resolved_query = resolved_query.replace(ref, replacement)
-
             logger.info(f"Resolved table reference: '{session.last_table}'")
-
-        # Handle count/quantity references
-        quantity_queries = [
-            "how many?",
-            "count them",
-            "how many are there?",
-            "what's the count?",
-            "give me the count"
-        ]
-
-        if query_lower.strip() in quantity_queries and session.last_table:
-            resolved_query = f"Count all records in the {session.last_table} table"
-            logger.info(f"Resolved count query for table: {session.last_table}")
-
-        # Handle "show me more" references
-        if any(phrase in query_lower for phrase in ["show me more", "get more", "more records"]):
-            if session.last_table:
-                resolved_query = f"Show me more records from the {session.last_table} table"
-                logger.info(f"Resolved 'more' query for table: {session.last_table}")
-
-        # Handle limit extractions more intelligently
-        if "first" in query_lower and session.last_table:
-            # Extract number after "first"
-            words = query.split()
-            for i, word in enumerate(words):
-                if word.lower() == "first" and i + 1 < len(words):
-                    try:
-                        limit = int(words[i + 1])
-                        resolved_query = f"Show me the first {limit} records from the {session.last_table} table"
-                        logger.info(f"Resolved limit query: {limit} from {session.last_table}")
-                        break
-                    except ValueError:
-                        continue
 
         return resolved_query
 
@@ -262,6 +283,8 @@ class DBAgentConnector:
             "summary": context_summary,
             "last_table": session.last_table,
             "last_operation": session.last_operation,
+            "last_filter": session.last_filter,  # ADD THIS
+            "last_result_count": session.last_result_count,  # ADD THIS
             "recent_queries": [h["query"] for h in session.history[-3:]]
         }
 
