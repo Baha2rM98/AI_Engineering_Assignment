@@ -378,9 +378,11 @@ AI_Engineering_Assignment/
 │   │   └── db_connector.py        # Database operations
 │   └── main.py                    # Application entry point
 ├── tests/
-│   ├── test_agent.py             # Agent functionality tests
-│   ├── test_api.py               # API endpoint tests
-│   └── test_database.py          # Database operation tests
+│   ├── conftest.py                 # Sets up comprehensive test fixtures
+│   ├── test_agent.py               # Agent functionality tests
+│   ├── test_api.py                 # API endpoint tests
+│   ├── test_database.py            # Database operation tests
+    └── test_db_agent_connector.py  # Database agent connector tests
 ├── docker/
 │   └── Dockerfile                # Container configuration
 ├── .github/workflows/
@@ -392,7 +394,7 @@ AI_Engineering_Assignment/
 
 ```bash
 # Run all tests
-pytest -v
+pytest
 ```
 
 ### Code Quality
