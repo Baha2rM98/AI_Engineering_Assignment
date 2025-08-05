@@ -61,24 +61,18 @@ class SessionInfoResponse(BaseModel):
 def read_root():
     return {
         "name": "LangGraph Database Agent API with Memory Management",
-        "version": "2.0.0",
-        "description": "Natural language interface for database operations with conversation memory",
-        "features": [
-            "Session-based conversation memory",
-            "Contextual reference resolution",
-            "Multi-user session isolation",
-            "Conversation history tracking"
-        ]
+        "version": "1.0.0",
+        "description": "Natural language interface for database operations with conversation memory"
     }
 
 
-@app.get("/health")
+@app.get("/db_connection")
 def health_check(db_agent: DBAgentConnector = Depends(get_db_agent)):
     connection_ok = db_agent.db_connector.test_connection()
     if not connection_ok:
         raise HTTPException(status_code=503, detail="Database connection failed")
     return {
-        "status": "healthy",
+        "status": "connected",
         "database_connection": "ok",
         "active_sessions": len(db_agent.conversation_sessions)
     }
