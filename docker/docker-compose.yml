@@ -1,22 +1,6 @@
 version: '3.8'
 
 services:
-  database:
-    image: postgres:15
-    environment:
-      POSTGRES_DB: langagent
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5433:5432"  # Changed port
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
   app:
     build:
       context: ..
@@ -24,17 +8,14 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DB_HOST=database
-      - DB_PORT=5432  # Keep this as 5432 (internal container port)
+      - DB_HOST=host.docker.internal
+      - DB_PORT=5433
       - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_NAME=langagent
+      - DB_PASSWORD=fuckoff
+      - DB_NAME=sakila
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-    depends_on:
-      database:
-        condition: service_healthy
+      - HOST=0.0.0.0
+      - PORT=8000
+      - LOG_LEVEL=INFO
     volumes:
       - ../app:/app/app
-
-volumes:
-  postgres_data:
