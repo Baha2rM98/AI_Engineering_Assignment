@@ -41,6 +41,7 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     success: bool
     message: str
+    agent_response: str
     data: Optional[List[Dict[str, Any]]] = None
     affected_rows: Optional[int] = None
     session_id: Optional[str] = None
@@ -97,7 +98,8 @@ def process_query(request: QueryRequest, db_agent: DBAgentConnector = Depends(ge
 
         return QueryResponse(
             success=result.get("success", False),
-            message=result.get("agent_response", ""),
+            message=result.get("message", ""),
+            agent_response=result.get("agent_response", ""),
             data=result.get("data"),
             affected_rows=result.get("affected_rows"),
             session_id=request.session_id,
