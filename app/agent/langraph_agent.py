@@ -430,13 +430,34 @@ def query_database(query: str, database_info: Dict[str, Any]) -> Dict[str, Any]:
 
         # Prepare a concise version of schema for logging
         schema_summary = {}
+
         if isinstance(database_info, dict):
-            for table_name in list(database_info.keys())[:3]:  # Just log a few tables
-                if isinstance(database_info[table_name], dict) and "columns" in database_info[table_name]:
-                    schema_summary[table_name] = {
-                        "columns_count": len(database_info[table_name]["columns"]),
-                        "sample_columns": [c["name"] for c in database_info[table_name]["columns"][:3]]
-                    }
+            # Case 1: formatted schema from _format_schema_for_llm()
+            if isinstance(database_info.get("tables"), list):
+                for t in database_info["tables"][:3]:
+                    if isinstance(t, dict):
+                        cols = t.get("columns", []) or []
+                        name = t.get("name", "<unknown>")
+                        schema_summary[name] = {
+                            "columns_count": len(cols),
+                            "sample_columns": [
+                                c.get("name") for c in cols[:3]
+                                if isinstance(c, dict) and "name" in c
+                            ]
+                        }
+            else:
+                # Case 2: raw schema like { "actor": {"columns":[...]}, ... }
+                for table_name, table_info in list(database_info.items())[:3]:
+                    if isinstance(table_info, dict) and "columns" in table_info:
+                        cols = table_info.get("columns") or []
+                        schema_summary[table_name] = {
+                            "columns_count": len(cols),
+                            "sample_columns": [
+                                c.get("name") for c in cols[:3]
+                                if isinstance(c, dict) and "name" in c
+                            ]
+                        }
+
         print(f"Schema summary: {schema_summary}")
 
         initial_state = AgentState(
