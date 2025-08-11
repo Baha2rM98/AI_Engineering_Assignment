@@ -162,7 +162,6 @@ def initialize_agent():
             result = chain.invoke({
                 "query": state.query,
                 "understood_intent": state.context["understood_intent"],
-                "database_info": state.database_info
             })
 
             # Parse the plan from the LLM response
@@ -255,7 +254,6 @@ def initialize_agent():
             # Extract execution parameters from the plan
             result = chain.invoke({
                 "execution_plan": state.context["execution_plan"],
-                "database_info": state.database_info
             })
 
             # Store the operation details for actual execution
@@ -338,7 +336,7 @@ def initialize_agent():
         try:
             result = chain.invoke({
                 "query": state.query,
-                "result": state.execution_result
+                "result": state.context["operation_details"]
             })
 
             state.response = result.content
