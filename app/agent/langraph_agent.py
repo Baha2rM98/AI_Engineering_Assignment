@@ -468,11 +468,7 @@ def query_database(query: str, database_info: Dict[str, Any]) -> Dict[str, Any]:
         print("Invoking agent...")
         result = agent.invoke(initial_state)
         print(f"Agent result type: {type(result)}")
-
-        if hasattr(result, 'response'):
-            print(f"Agent response: {result.response[:100]}...")
-        else:
-            print(f"Agent result has no 'response' attribute: {result}")
+        print(f"Agent result: {result}")
 
         # Ensure we always return a dictionary
         if isinstance(result, dict):
