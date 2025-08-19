@@ -1,0 +1,220 @@
+** Basic Queries:
+// Query 1: Show tables
+{
+    "query": "Show me all tables in the database"
+}
+
+// Query 2: Get actor information
+{
+    "query": "Find the first 10 actors in the database"
+}
+
+// Query 3: Film information
+{
+    "query": "List all films with PG-13 rating"
+}
+
+// Query 4: Join operation
+{
+    "query": "Show me which customers rented what films"
+}
+
+// Query 5: Aggregation
+{
+    "query": "Count the number of films in each category"
+}
+
+=============================================================================
+
+** Test Set 1: Simple Table Context **
+// Request 1: Establish context
+{
+    "query": "Show me all customers",
+    "session_id": "customer_session"
+}
+
+// Request 2: Use context
+{
+    "query": "How many are there?",
+    "session_id": "customer_session"
+}
+
+// Request 3: More context usage
+{
+    "query": "Show me just the first 10 from that table",
+    "session_id": "customer_session"
+}
+
+// Request 4: Different reference
+{
+    "query": "Get me 5 more from the same table",
+    "session_id": "customer_session"
+}
+
+===========================================================
+
+**Test Set 2: Film Database Exploration**
+// Request 1: Films with rating
+{
+    "query": "Find all films with R rating",
+    "session_id": "film_explorer"
+}
+
+// Request 2: Count reference
+{
+    "query": "Count them",
+    "session_id": "film_explorer"
+}
+
+// Request 3: Different filter on same table
+{
+    "query": "Now show me PG-13 films from that same table",
+    "session_id": "film_explorer"
+}
+
+// Request 4: Limit with context
+{
+    "query": "Just show me the first 3",
+    "session_id": "film_explorer"
+}
+
+===============================================================
+
+**Test Set 3: Multi-Step Analysis**
+// Request 1: Start with rentals
+{
+    "query": "Show me recent rentals",
+    "session_id": "rental_analysis"
+}
+
+// Request 2: Count follow-up
+{
+    "query": "How many rentals are there in total?",
+    "session_id": "rental_analysis"
+}
+
+// Request 3: Switch context but reference previous
+{
+    "query": "Now show me customers who made those rentals",
+    "session_id": "rental_analysis"
+}
+
+// Request 4: Back to original context
+{
+    "query": "Show me more from the rental table",
+    "session_id": "rental_analysis"
+}
+
+=================================================================
+
+**Test Set 4: Complex Queries with Context**
+// Request 1: Filtered data
+{
+    "query": "Show me actors whose first name starts with 'J'",
+    "session_id": "actor_research"
+}
+
+// Request 2: Specific limit
+{
+    "query": "Show me only the first 8 from that table",
+    "session_id": "actor_research"
+}
+
+// Request 3: Different filter, same table
+{
+    "query": "Now find actors with last name containing 'SON'",
+    "session_id": "actor_research"
+}
+
+// Request 4: Count with context
+{
+    "query": "How many of those are there?",
+    "session_id": "actor_research"
+}
+
+====================================================================
+
+**Test Set 5: Multiple Users Simultaneously**
+// User Alice - Working with films
+{
+    "query": "Show me all comedy films",
+    "session_id": "alice_session_001"
+}
+
+// User Bob - Working with actors (same time)
+{
+    "query": "Show me all actors",
+    "session_id": "bob_session_001"
+}
+
+// Alice continues with films
+{
+    "query": "How many comedy films are there?",
+    "session_id": "alice_session_001"
+}
+
+// Bob continues with actors
+{
+    "query": "Count them all",
+    "session_id": "bob_session_001"
+}
+
+// Verify isolation - Alice's context
+{
+    "query": "Show me the first 5 from that table",
+    "session_id": "alice_session_001"
+}
+
+// Verify isolation - Bob's context
+{
+    "query": "Give me the first 5 from that table",
+    "session_id": "bob_session_001"
+}
+
+=================================================================
+
+**Test Set 6: Context Switching**
+// Request 1: Start with one table
+{
+    "query": "Show me all categories",
+    "session_id": "context_switch_test"
+}
+
+// Request 2: Switch to different table
+{
+    "query": "Actually, show me languages instead",
+    "session_id": "context_switch_test"
+}
+
+// Request 3: Reference previous (should be languages now)
+{
+    "query": "How many are in that table?",
+    "session_id": "context_switch_test"
+}
+
+// Request 4: Back to first table explicitly
+{
+    "query": "Go back to categories and count them",
+    "session_id": "context_switch_test"
+}
+
+==================================================================
+
+**Test Set 7: Ambiguous References**
+// Request 1: Multiple table query
+{
+    "query": "Show me film categories and their names",
+    "session_id": "ambiguous_test"
+}
+
+// Request 2: Ambiguous reference
+{
+    "query": "Show me more from that table",
+    "session_id": "ambiguous_test"
+}
+
+// Request 3: Explicit clarification
+{
+    "query": "I mean the category table specifically",
+    "session_id": "ambiguous_test"
+}
