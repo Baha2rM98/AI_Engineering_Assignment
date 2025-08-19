@@ -2,3 +2,4 @@
 query_samples.txt
 .env
 *.log
+debug.py

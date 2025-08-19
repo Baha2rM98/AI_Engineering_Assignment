@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timedelta
 from threading import Lock
 from app.database.db_connector import DatabaseConnector
-from app.agent.langraph_agent import query_database
+from app.agent.langgraph_agent import query_database
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 logger = logging.getLogger(__name__)
@@ -269,73 +269,162 @@ class DBAgentConnector:
             logger.error(f"Failed to fetch schema: {e}")
             self.database_schema = {"error": f"Failed to fetch schema: {str(e)}"}
 
-    def _parse_operation_details(self, operation_details: str) -> Dict[str, Any]:
-        """Parse the operation details from the agent into executable parameters."""
-        try:
-            # Try to extract JSON from the text
-            if "```json" in operation_details and "```" in operation_details.split("```json")[1]:
-                json_str = operation_details.split("```json")[1].split("```")[0].strip()
-            elif "```" in operation_details and "```" in operation_details.split("```")[1]:
-                json_str = operation_details.split("```")[1].strip()
-            else:
-                json_str = operation_details
-
-            return json.loads(json_str)
-        except Exception as e:
-            logger.debug(f"JSON parsing failed: {e}, falling back to basic parsing")
-            result = {}
-            operation_lower = operation_details.lower()
-
-            if "select" in operation_lower:
-                result["operation_type"] = "select"
-            elif "insert" in operation_lower:
-                result["operation_type"] = "insert"
-            elif "update" in operation_lower:
-                result["operation_type"] = "update"
-            elif "delete" in operation_lower:
-                result["operation_type"] = "delete"
-            else:
-                result["operation_type"] = "unknown"
-
-            # Extract table name
-            tables = []
-            for table_name in self.database_schema.keys():
-                if table_name.lower() in operation_lower:
-                    tables.append(table_name)
-
-            if tables:
-                result["table"] = tables[0]
-
-            return result
+    # def _parse_operation_details(self, operation_details: str) -> Dict[str, Any]:
+    #     """Parse the operation details from the agent into executable parameters."""
+    #     try:
+    #         # Try to extract JSON from the text
+    #         if "```json" in operation_details and "```" in operation_details.split("```json")[1]:
+    #             json_str = operation_details.split("```json")[1].split("```")[0].strip()
+    #         elif "```" in operation_details and "```" in operation_details.split("```")[1]:
+    #             json_str = operation_details.split("```")[1].strip()
+    #         else:
+    #             json_str = operation_details
+    #
+    #         return json.loads(json_str)
+    #     except Exception as e:
+    #         logger.debug(f"JSON parsing failed: {e}, falling back to basic parsing")
+    #         result = {}
+    #         operation_lower = operation_details.lower()
+    #
+    #         if "select" in operation_lower:
+    #             result["operation_type"] = "select"
+    #         elif "insert" in operation_lower:
+    #             result["operation_type"] = "insert"
+    #         elif "update" in operation_lower:
+    #             result["operation_type"] = "update"
+    #         elif "delete" in operation_lower:
+    #             result["operation_type"] = "delete"
+    #         else:
+    #             result["operation_type"] = "unknown"
+    #
+    #         # Extract table name
+    #         tables = []
+    #         for table_name in self.database_schema.keys():
+    #             if table_name.lower() in operation_lower:
+    #                 tables.append(table_name)
+    #
+    #         if tables:
+    #             result["table"] = tables[0]
+    #
+    #         return result
 
     def _format_schema_for_llm(self) -> Dict[str, Any]:
-        """Format the database schema in a way that's more digestible for the LLM."""
+        """Format the full database schema for LLM consumption with rich metadata."""
         if not self.database_schema:
             return {"error": "No schema available"}
 
-        formatted_schema = {
-            "database_name": "sakila",
-            "tables": []
+        dbname = self.database_schema.get("database_name", "unknown")
+        raw_tables = self.database_schema.get("tables", {})
+
+        # Normalize tables into an iterable of (qualified_key, table_info)
+        # Supports either dict {"schema.table": {...}} or list [{"name": ...}, ...]
+        tables_iter = []
+        if isinstance(raw_tables, dict):
+            tables_iter = list(raw_tables.items())
+        elif isinstance(raw_tables, list):
+            # Fallback to list shape like [{"name": "film", "columns": [...]}, ...]
+            tables_iter = [(t.get("name"), t) for t in raw_tables]
+        else:
+            tables_iter = []
+
+        formatted_tables = []
+        schema_counts: Dict[str, int] = {}
+        total_columns = 0
+        total_pks = 0
+        total_fks = 0
+
+        for key, tinfo in tables_iter:
+            # Try to extract schema and table name robustly
+            schema_name = tinfo.get("schema")
+            table_name = tinfo.get("table_name") or tinfo.get("name") or key
+
+            if not schema_name and isinstance(key, str) and "." in key:
+                schema_name, table_name = key.split(".", 1)
+
+            schema_name = schema_name or "public"
+
+            cols = tinfo.get("columns", [])
+            pks = tinfo.get("primary_keys", []) or []
+            fks_raw = tinfo.get("foreign_keys", []) or []
+            idxs = tinfo.get("indices", []) or []
+
+            # Column formatting with richer metadata
+            columns_fmt = []
+            for c in cols:
+                col_name = c.get("name")
+                col_type = str(c.get("type"))
+                is_pk = col_name in pks
+                # Detect if this column participates in any FK
+                fk_refs = []
+                for fk in fks_raw:
+                    if col_name in (fk.get("constrained_columns") or []):
+                        fk_refs.append({
+                            "referred_schema": fk.get("referred_schema") or "public",
+                            "referred_table": fk.get("referred_table"),
+                            "referred_columns": fk.get("referred_columns")
+                        })
+                columns_fmt.append({
+                    "name": col_name,
+                    "type": col_type,
+                    "nullable": c.get("nullable", True),
+                    "default": c.get("default"),
+                    "is_primary_key": is_pk,
+                    "foreign_key_refs": fk_refs  # empty list if none
+                })
+
+            # FK formatting at table level
+            foreign_keys_fmt = [{
+                "constrained_columns": fk.get("constrained_columns"),
+                "referred_schema": fk.get("referred_schema") or "public",
+                "referred_table": fk.get("referred_table"),
+                "referred_columns": fk.get("referred_columns")
+            } for fk in fks_raw]
+
+            # Index formatting (pass through common fields if present)
+            indices_fmt = []
+            for ix in idxs:
+                indices_fmt.append({
+                    "name": ix.get("name"),
+                    "column_names": ix.get("column_names") or ix.get("column_names".upper()) or ix.get("columns"),
+                    "unique": ix.get("unique", False)
+                })
+
+            formatted_tables.append({
+                "schema": schema_name,
+                "name": table_name,
+                "qualified_name": f"{schema_name}.{table_name}",
+                "columns": columns_fmt,
+                "primary_keys": pks,
+                "foreign_keys": foreign_keys_fmt,
+                "indices": indices_fmt
+            })
+
+            # Stats
+            schema_counts[schema_name] = schema_counts.get(schema_name, 0) + 1
+            total_columns += len(cols)
+            total_pks += len(pks)
+            total_fks += len(fks_raw)
+
+        # Deterministic ordering
+        formatted_tables.sort(key=lambda t: (t["schema"], t["name"]))
+
+        # Build a terse summary
+        table_names = [t["qualified_name"] for t in formatted_tables]
+        summary = {
+            "database_name": dbname,
+            "table_count": len(formatted_tables),
+            "column_count": total_columns,
+            "primary_key_count": total_pks,
+            "foreign_key_count": total_fks,
+            "tables_by_schema": {sch: schema_counts[sch] for sch in sorted(schema_counts)},
+            "table_list": table_names  # keep last for easy truncation upstream if needed
         }
 
-        for table_name, table_info in self.database_schema.items():
-            table_data = {
-                "name": table_name,
-                "columns": [
-                    {
-                        "name": col["name"],
-                        "type": col["type"],
-                        "is_primary_key": col["name"] in table_info.get("primary_keys", [])
-                    }
-                    for col in table_info.get("columns", [])
-                ]
-            }
-            formatted_schema["tables"].append(table_data)
-
-        table_summary = ", ".join([t["name"] for t in formatted_schema["tables"]])
-        formatted_schema["summary"] = f"Database contains {len(formatted_schema['tables'])} tables: {table_summary}"
-
-        return formatted_schema
+        return {
+            "database_name": dbname,
+            "tables": formatted_tables,
+            "summary": summary
+        }
 
     @staticmethod
     def _extract_sql_from_response(response: str, context: Dict[str, Any]) -> Optional[str]:
@@ -432,34 +521,6 @@ class DBAgentConnector:
                 table = from_parts[0].rstrip(',;()')
                 return table
         return "database"
-
-    def _identify_table_from_query(self, query: str) -> str | None:
-        """Identify which table the natural language query is referring to."""
-        query_lower = query.lower()
-        table_mappings = {}
-
-        for table in self.database_schema.keys():
-            table_mappings[table.lower()] = table
-            if table.lower().endswith('s'):
-                table_mappings[table.lower()[:-1]] = table
-            else:
-                table_mappings[table.lower() + 's'] = table
-
-        if 'film' in table_mappings:
-            table_mappings['movie'] = 'film'
-            table_mappings['movies'] = 'film'
-
-        for term, table in table_mappings.items():
-            if term in query_lower:
-                return table
-
-        if 'actor' in self.database_schema:
-            return 'actor'
-
-        if self.database_schema:
-            return list(self.database_schema.keys())[0]
-
-        return None
 
     def _generate_result_message(self, sql: str, data: List[Dict[str, Any]],
                                  affected_rows: int = None) -> str:
@@ -583,7 +644,7 @@ class DBAgentConnector:
             sql_query = self._generate_sql_from_llm(resolved_query, context_aware_schema)
 
             if sql_query:
-                logger.info(f"Executing context-aware LLM-generated SQL: {sql_query}")
+                logger.info(f"Executing context-aware Agent-generated SQL: {sql_query}")
                 db_result = self.db_connector.execute_query(sql_query)
 
                 if db_result.get("success"):

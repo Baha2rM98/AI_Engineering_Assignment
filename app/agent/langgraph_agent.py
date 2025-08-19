@@ -16,7 +16,14 @@ class AgentState(BaseModel):
 
 
 def initialize_agent():
-    """Initialize the LangGraph agent with tools and memory management."""
+    """Initialize the LangGraph agent with tools and memory management.
+
+    This function creates a LangGraph workflow for handling natural language
+    database requests.  It is designed to work with **any** relational database
+    by avoiding hard‑coded schema information in the prompt.  The actual
+    database schema is supplied at runtime via the `database_info` field on
+    `AgentState` and injected into the prompts as needed.
+    """
 
     # Initialize the language model with Gemini
     llm = ChatGoogleGenerativeAI(
@@ -25,53 +32,22 @@ def initialize_agent():
         convert_system_message_to_human=True  # Important for Gemini compatibility
     )
 
-    # Define the system message for the agent
+    # Define a generic system message for the agent.  Avoid embedding any
+    # particular database schema here; the specific schema will be passed in
+    # through the `database_info` field and inserted into prompts later.
     system_message = """You are a database assistant that helps users interact with a PostgreSQL database.
-    You can interpret user queries, develop plans to retrieve or modify data, and execute those plans.
-
-    DATABASE INFORMATION:
-        SAKILA DVD RENTAL DATABASE SCHEMA:
-
-        MAIN TABLES:
-        - actor (actor_id, first_name, last_name, last_update)
-        - film (film_id, title, description, release_year, language_id, rental_duration, rental_rate, length, replacement_cost, rating, special_features, last_update)
-        - customer (customer_id, store_id, first_name, last_name, email, address_id, activebool, create_date, last_update, active)
-        - rental (rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update)
-        - payment (payment_id, customer_id, staff_id, rental_id, amount, payment_date)
-        - inventory (inventory_id, film_id, store_id, last_update)
-        - store (store_id, manager_staff_id, address_id, last_update)
-        - staff (staff_id, first_name, last_name, address_id, email, store_id, active, username, password, last_update)
-
-        RELATIONSHIP TABLES:
-        - film_actor (actor_id, film_id, last_update) - Links films to actors
-        - film_category (film_id, category_id, last_update) - Links films to categories
-
-        REFERENCE TABLES:
-        - category (category_id, name, last_update)
-        - language (language_id, name, last_update)
-        - address (address_id, address, address2, district, city_id, postal_code, phone, last_update)
-        - city (city_id, city, country_id, last_update)
-        - country (country_id, country, last_update)
-
-        VIEWS:
-        - actor_info, customer_list, film_list, staff_list, sales_by_film_category, sales_by_store
-
-        RATING ENUM: 'G', 'PG', 'PG-13', 'R', 'NC-17'
-
-        COMMON QUERY PATTERNS:
-        - Films by rating: WHERE rating = 'PG-13'
-        - Actor search: WHERE first_name LIKE 'John%' 
-        - Active customers: WHERE activebool = true
-        - Recent rentals: WHERE rental_date > '2005-01-01'
-        - Customer payments: JOIN customer ON payment.customer_id = customer.customer_id
+    You can interpret user queries, develop plans to retrieve or modify data,
+    and execute those plans.
 
     Important instructions:
-    1. When asked about tables, make sure to reference ALL tables from the database
-    2. For data retrieval, use the appropriate SQL operations (SELECT)
-    3. Format your responses clearly and concisely
-    4. If the database schema information is incomplete, ask for it
+    1. When asked about tables, make sure to reference **all** tables from the database.
+    2. For data retrieval, use the appropriate SQL operations (SELECT).
+    3. Format your responses clearly and concisely.
+    4. If the database schema information is incomplete, ask the user to provide it.
 
-    Your goal is to understand what the user wants to do with the database and help them accomplish it.
+    The database schema will be provided separately via the `database_info` context.
+    Your goal is to understand what the user wants to do with the database and help
+    them accomplish it.
     """
 
     workflow = StateGraph(AgentState)
@@ -103,46 +79,15 @@ def initialize_agent():
             state.error = "Query understanding failed. Cannot create execution plan."
             return state
 
-        # Create a prompt for the planning step
+        # Create a prompt for the planning step.  Inject the current database
+        # schema using the `database_info` placeholder so that the planner works
+        # with any database.
         planning_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a database operation planner.
             Your job is to convert natural language database requests into a sequence of specific operations.
 
             For the database with the following structure:
-                SAKILA DVD RENTAL DATABASE SCHEMA:
-
-                MAIN TABLES:
-                - actor (actor_id, first_name, last_name, last_update)
-                - film (film_id, title, description, release_year, language_id, rental_duration, rental_rate, length, replacement_cost, rating, special_features, last_update)
-                - customer (customer_id, store_id, first_name, last_name, email, address_id, activebool, create_date, last_update, active)
-                - rental (rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update)
-                - payment (payment_id, customer_id, staff_id, rental_id, amount, payment_date)
-                - inventory (inventory_id, film_id, store_id, last_update)
-                - store (store_id, manager_staff_id, address_id, last_update)
-                - staff (staff_id, first_name, last_name, address_id, email, store_id, active, username, password, last_update)
-
-                RELATIONSHIP TABLES:
-                - film_actor (actor_id, film_id, last_update) - Links films to actors
-                - film_category (film_id, category_id, last_update) - Links films to categories
-
-                REFERENCE TABLES:
-                - category (category_id, name, last_update)
-                - language (language_id, name, last_update)
-                - address (address_id, address, address2, district, city_id, postal_code, phone, last_update)
-                - city (city_id, city, country_id, last_update)
-                - country (country_id, country, last_update)
-
-                VIEWS:
-                - actor_info, customer_list, film_list, staff_list, sales_by_film_category, sales_by_store
-
-                RATING ENUM: 'G', 'PG', 'PG-13', 'R', 'NC-17'
-
-                COMMON QUERY PATTERNS:
-                - Films by rating: WHERE rating = 'PG-13'
-                - Actor search: WHERE first_name LIKE 'John%' 
-                - Active customers: WHERE activebool = true
-                - Recent rentals: WHERE rental_date > '2005-01-01'
-                - Customer payments: JOIN customer ON payment.customer_id = customer.customer_id
+            {database_info}
 
             Create a detailed plan that includes:
             1. The type of operation (select, insert, update, delete)
@@ -161,7 +106,8 @@ def initialize_agent():
         try:
             result = chain.invoke({
                 "query": state.query,
-                "understood_intent": state.context["understood_intent"],
+                "understood_intent": state.context.get("understood_intent", ""),
+                "database_info": state.database_info,
             })
 
             # Parse the plan from the LLM response
@@ -195,44 +141,11 @@ def initialize_agent():
         # Create a prompt to parse the execution plan into actual database operations
         execution_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a database operation executor.
-            Your job is to convert a database operation plan into specific parameters 
-            for the database connector.
+            Your job is to convert a high‑level database operation plan into the specific
+            parameters required to perform the operation on the database.
 
-            The database has the following structure:
-                SAKILA DVD RENTAL DATABASE SCHEMA:
-
-                MAIN TABLES:
-                - actor (actor_id, first_name, last_name, last_update)
-                - film (film_id, title, description, release_year, language_id, rental_duration, rental_rate, length, replacement_cost, rating, special_features, last_update)
-                - customer (customer_id, store_id, first_name, last_name, email, address_id, activebool, create_date, last_update, active)
-                - rental (rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update)
-                - payment (payment_id, customer_id, staff_id, rental_id, amount, payment_date)
-                - inventory (inventory_id, film_id, store_id, last_update)
-                - store (store_id, manager_staff_id, address_id, last_update)
-                - staff (staff_id, first_name, last_name, address_id, email, store_id, active, username, password, last_update)
-
-                RELATIONSHIP TABLES:
-                - film_actor (actor_id, film_id, last_update) - Links films to actors
-                - film_category (film_id, category_id, last_update) - Links films to categories
-
-                REFERENCE TABLES:
-                - category (category_id, name, last_update)
-                - language (language_id, name, last_update)
-                - address (address_id, address, address2, district, city_id, postal_code, phone, last_update)
-                - city (city_id, city, country_id, last_update)
-                - country (country_id, country, last_update)
-
-                VIEWS:
-                - actor_info, customer_list, film_list, staff_list, sales_by_film_category, sales_by_store
-
-                RATING ENUM: 'G', 'PG', 'PG-13', 'R', 'NC-17'
-
-                COMMON QUERY PATTERNS:
-                - Films by rating: WHERE rating = 'PG-13'
-                - Actor search: WHERE first_name LIKE 'John%' 
-                - Active customers: WHERE activebool = true
-                - Recent rentals: WHERE rental_date > '2005-01-01'
-                - Customer payments: JOIN customer ON payment.customer_id = customer.customer_id
+            The database you are working with has the following structure:
+            {database_info}
 
             Parse the execution plan and extract the exact parameters needed for:
             - operation_type (select, insert, update, delete)
@@ -241,9 +154,12 @@ def initialize_agent():
             - conditions
             - values (for insert/update)
 
-            Format your response as a valid JSON object or SQL query.
-            If using JSON, include at least operation_type and table fields.
-            If using SQL, provide the complete SQL statement that can be executed directly.
+            You must output:
+            - A JSON object containing the extracted fields (recommended for API execution), and
+            - A complete SQL statement that can be executed directly.
+
+            Ensure that you only reference tables and columns present in the provided
+            `database_info`. Do not assume any schema details beyond what is given.
             """),
             ("user", "Execution plan: {execution_plan}")
         ])
@@ -254,6 +170,7 @@ def initialize_agent():
             # Extract execution parameters from the plan
             result = chain.invoke({
                 "execution_plan": state.context["execution_plan"],
+                "database_info": state.database_info
             })
 
             # Store the operation details for actual execution
@@ -417,46 +334,17 @@ def initialize_agent():
     return workflow.compile()
 
 
-def query_database(query: str, database_info: Dict[str, Any]) -> Dict[str, Any]:
+def query_database(query: str, context_schema: Dict[str, Any]) -> Dict[str, Any]:
     """Execute a query against the database using the LangGraph agent."""
+
+    database_info = {k: context_schema[k] for k in ["database_name", "tables", "summary"]}
+
     try:
         print("Initializing LangGraph agent...")
         agent = initialize_agent()
 
         print(f"Query: {query}")
-        print(f"Database info summary: {len(database_info)} tables available")
-
-        # Prepare a concise version of schema for logging
-        schema_summary = {}
-
-        if isinstance(database_info, dict):
-            # Case 1: formatted schema from _format_schema_for_llm()
-            if isinstance(database_info.get("tables"), list):
-                for t in database_info["tables"][:3]:
-                    if isinstance(t, dict):
-                        cols = t.get("columns", []) or []
-                        name = t.get("name", "<unknown>")
-                        schema_summary[name] = {
-                            "columns_count": len(cols),
-                            "sample_columns": [
-                                c.get("name") for c in cols[:3]
-                                if isinstance(c, dict) and "name" in c
-                            ]
-                        }
-            else:
-                # Case 2: raw schema like { "actor": {"columns":[...]}, ... }
-                for table_name, table_info in list(database_info.items())[:3]:
-                    if isinstance(table_info, dict) and "columns" in table_info:
-                        cols = table_info.get("columns") or []
-                        schema_summary[table_name] = {
-                            "columns_count": len(cols),
-                            "sample_columns": [
-                                c.get("name") for c in cols[:3]
-                                if isinstance(c, dict) and "name" in c
-                            ]
-                        }
-
-        print(f"Schema summary: {schema_summary}")
+        print(f"Provided context schema: {context_schema}")
 
         initial_state = AgentState(
             query=query,
