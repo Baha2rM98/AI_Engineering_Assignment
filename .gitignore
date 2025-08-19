@@ -1,4 +1,3 @@
 .idea
-#query_samples.txt
+query_samples.txt
 .env
-*.log

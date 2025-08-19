@@ -175,8 +175,52 @@ class DBAgentConnector:
             del self.conversation_sessions[sid]
             logger.debug(f"Cleaned up expired session: {sid}")
 
-    @staticmethod
-    def _resolve_contextual_references(query: str, session: ConversationSession) -> str:
+    def _is_table_listing_query(self, query: str) -> bool:
+        """
+        Improved detection for table listing queries.
+        Only returns True for explicit table listing requests.
+        """
+        query_lower = query.lower().strip()
+
+        # Explicit table listing patterns
+        table_listing_patterns = [
+            "show tables",
+            "list tables",
+            "show all tables",
+            "list all tables",
+            "what tables",
+            "which tables",
+            "get tables",
+            "display tables"
+        ]
+
+        # Check for exact matches or patterns at start of query
+        for pattern in table_listing_patterns:
+            if query_lower == pattern or query_lower.startswith(pattern):
+                return True
+
+        # FIXED: Check for contextual references FIRST, then explicit table listing
+        contextual_references = [
+            "that table",
+            "the same table",
+            "this table",
+            "from that table",
+            "from the same table",
+            "from this table"
+        ]
+
+        # If it's a contextual reference, it's NOT a table listing
+        for ref in contextual_references:
+            if ref in query_lower:
+                return False
+
+        # Only allow very specific "show table" patterns (not "show ... table")
+        if query_lower in ["show table", "show the table", "list table", "list the table"]:
+            return True
+
+        return False
+
+    def _resolve_contextual_references(self, query: str, session: ConversationSession) -> str:
         """Enhanced contextual reference resolution with filter context."""
         query_lower = query.lower()
         resolved_query = query
@@ -243,8 +287,7 @@ class DBAgentConnector:
 
         return resolved_query
 
-    @staticmethod
-    def _create_context_aware_prompt(session: ConversationSession, schema_info: Dict[str, Any]) -> \
+    def _create_context_aware_prompt(self, query: str, session: ConversationSession, schema_info: Dict[str, Any]) -> \
             Dict[str, Any]:
         """Create an enhanced prompt with conversation context."""
         context_summary = session.get_context_summary()
@@ -337,8 +380,7 @@ class DBAgentConnector:
 
         return formatted_schema
 
-    @staticmethod
-    def _extract_sql_from_response(response: str, context: Dict[str, Any]) -> Optional[str]:
+    def _extract_sql_from_response(self, response: str, context: Dict[str, Any]) -> Optional[str]:
         """Extract SQL from agent response or context."""
         if "sql_query" in context:
             return context["sql_query"]
@@ -367,8 +409,7 @@ class DBAgentConnector:
 
         return None
 
-    @staticmethod
-    def _generate_sql_from_llm(query: str, schema_info: Dict[str, Any]) -> Optional[str]:
+    def _generate_sql_from_llm(self, query: str, schema_info: Dict[str, Any]) -> Optional[str]:
         """Generate SQL directly using the LLM with context awareness."""
         try:
             llm = ChatGoogleGenerativeAI(
@@ -422,8 +463,7 @@ class DBAgentConnector:
             logger.error(f"Error generating SQL from LLM: {e}")
             return None
 
-    @staticmethod
-    def _extract_table_name_from_sql(sql: str) -> str:
+    def _extract_table_name_from_sql(self, sql: str) -> str:
         """Extract table name from a SQL query."""
         sql_lower = sql.lower()
         if "from" in sql_lower:
@@ -461,7 +501,7 @@ class DBAgentConnector:
 
         return None
 
-    def _generate_result_message(self, sql: str, data: List[Dict[str, Any]],
+    def _generate_result_message(self, query: str, sql: str, data: List[Dict[str, Any]],
                                  affected_rows: int = None) -> str:
         """Generate appropriate response message based on the query and results."""
         if affected_rows is None:
@@ -531,14 +571,27 @@ class DBAgentConnector:
             self._refresh_schema()
             formatted_schema = self._format_schema_for_llm()
 
+            # STEP 4: NOW check for special cases (after context resolution)
+            if self._is_table_listing_query(resolved_query):
+                tables = self.db_connector.get_table_names()
+                result = {
+                    "success": True,
+                    "agent_response": f"I found {len(tables)} tables in the database: {', '.join(tables)}",
+                    "data": [{"table_name": table} for table in tables],
+                    "affected_rows": len(tables)
+                }
+                session.add_query(query, result)
+                return result
+
             # STEP 5: Create context-aware prompt
-            context_aware_schema = self._create_context_aware_prompt(session, formatted_schema)
+            context_aware_schema = self._create_context_aware_prompt(
+                resolved_query, session, formatted_schema
+            )
 
             # STEP 6: Process with LangGraph agent
             try:
                 logger.info("Calling LangGraph agent with context...")
                 agent_result = query_database(resolved_query, context_aware_schema)
-
                 logger.info(f"Agent result type: {type(agent_result)}")
             except Exception as agent_error:
                 logger.error(f"Error in query_database: {agent_error}")
@@ -551,10 +604,20 @@ class DBAgentConnector:
                 return result
 
             # Extract response and context from agent result
-            agent_response = agent_result.get("response", "")
-            agent_context = agent_result.get("context", {})
+            agent_response = ""
+            agent_context = {}
+            if isinstance(agent_result, dict):
+                agent_response = agent_result.get("response", "")
+                agent_context = agent_result.get("context", {})
+            else:
+                try:
+                    agent_response = agent_result.response if hasattr(agent_result, "response") else str(agent_result)
+                    agent_context = agent_result.context if hasattr(agent_result, "context") else {}
+                except Exception as attr_error:
+                    logger.error(f"Error accessing agent result attributes: {attr_error}")
+                    agent_response = str(agent_result)
 
-            logger.info(f"Agent response: {agent_response}")
+            logger.info(f"Agent response: {agent_response[:100]}...")
 
             # STAGE 1: Try to directly extract SQL from the response or context
             sql_query = self._extract_sql_from_response(agent_response, agent_context)
@@ -568,8 +631,7 @@ class DBAgentConnector:
                     affected_rows = db_result.get("affected_rows", 0)  # Get from DB result
                     result = {
                         "success": True,
-                        "message": self._generate_result_message(sql_query, data, affected_rows),
-                        "agent_response": agent_response,
+                        "agent_response": self._generate_result_message(resolved_query, sql_query, data, affected_rows),
                         "data": data,
                         "affected_rows": affected_rows,  # Use DB result
                         "sql_query": sql_query
@@ -591,11 +653,36 @@ class DBAgentConnector:
                     affected_rows = db_result.get("affected_rows", 0)  # Get from DB result
                     result = {
                         "success": True,
-                        "message": self._generate_result_message(sql_query, data, affected_rows),
-                        "agent_response": "Agent-generated SQL executed successfully.",
+                        "agent_response": self._generate_result_message(resolved_query, sql_query, data, affected_rows),
                         "data": data,
                         "affected_rows": affected_rows,  # Use DB result
                         "sql_query": sql_query
+                    }
+                    session.add_query(query, result)
+                    return result
+
+            # STAGE 3: Last resort - try to find mentioned tables and do a basic query with session context
+            target_table = session.last_table or self._identify_table_from_query(resolved_query)
+            if target_table:
+                # Extract numeric values for potential limits
+                limit = 5  # Default
+                for word in resolved_query.lower().split():
+                    if word.isdigit() and 1 <= int(word) <= 1000:
+                        limit = int(word)
+                        break
+
+                sql = f"SELECT * FROM {target_table} LIMIT {limit}"
+                logger.info(f"Executing context-aware last-resort SQL: {sql}")
+
+                db_result = self.db_connector.execute_query(sql)
+                if db_result.get("success"):
+                    data = db_result.get("data", [])
+                    result = {
+                        "success": True,
+                        "agent_response": f"Found {len(data)} records in the {target_table} table.",
+                        "data": data,
+                        "affected_rows": len(data),
+                        "sql_query": sql
                     }
                     session.add_query(query, result)
                     return result
