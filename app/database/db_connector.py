@@ -26,7 +26,7 @@ class DatabaseConnector:
             self.connection_string = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
 
         self.engine = create_engine(self.connection_string)
-        self._metadata_cache = {}
+        # self._metadata_cache = {}
 
     def test_connection(self) -> bool:
         """Test if the database connection is working."""
@@ -182,60 +182,51 @@ class DatabaseConnector:
                 "operation_type": self._detect_operation_type(query)
             }
 
-    def get_table_names(self) -> List[str]:
+    def get_table_names(self, schema: Optional[str] = None) -> List[str]:
         """Get all table names in the database."""
         inspector = inspect(self.engine)
-        return inspector.get_table_names()
+        return sorted(inspector.get_table_names(schema=schema))
 
-    def get_table_schema(self, table_name: str) -> Dict[str, Any]:
+    def get_table_schema(self, table_name: str, schema: Optional[str] = None) -> Dict[str, Any]:
         """Get the schema for a specific table."""
-        if table_name in self._metadata_cache:
-            return self._metadata_cache[table_name]
-
         inspector = inspect(self.engine)
-
-        columns = []
-        for column in inspector.get_columns(table_name):
-            columns.append({
-                "name": column["name"],
-                "type": str(column["type"]),
-                "nullable": column.get("nullable", True),
-                "default": str(column.get("default", ""))
-            })
-
-        primary_keys = inspector.get_pk_constraint(table_name)
-        foreign_keys = []
-        for fk in inspector.get_foreign_keys(table_name):
-            foreign_keys.append({
-                "constrained_columns": fk["constrained_columns"],
-                "referred_table": fk["referred_table"],
-                "referred_columns": fk["referred_columns"]
-            })
-
-        indices = inspector.get_indexes(table_name)
-
-        table_schema = {
+        cols = inspector.get_columns(table_name, schema=schema)
+        pks = inspector.get_pk_constraint(table_name, schema=schema)
+        fks = inspector.get_foreign_keys(table_name, schema=schema)
+        idx = inspector.get_indexes(table_name, schema=schema)
+        return {
+            "schema": schema or inspector.default_schema_name,
             "table_name": table_name,
-            "columns": columns,
-            "primary_keys": primary_keys.get("constrained_columns", []),
-            "foreign_keys": foreign_keys,
-            "indices": indices
+            "columns": [
+                {"name": c["name"], "type": str(c["type"]), "nullable": c.get("nullable", True),
+                 "default": str(c.get("default", ""))}
+                for c in cols
+            ],
+            "primary_keys": pks.get("constrained_columns", []),
+            "foreign_keys": [
+                {
+                    "constrained_columns": fk["constrained_columns"],
+                    "referred_schema": fk.get("referred_schema"),
+                    "referred_table": fk["referred_table"],
+                    "referred_columns": fk["referred_columns"],
+                }
+                for fk in fks
+            ],
+            "indices": idx,
         }
-
-        # Cache the schema
-        self._metadata_cache[table_name] = table_schema
-
-        return table_schema
 
     def get_database_schema(self) -> Dict[str, Any]:
         """Get schema for all tables in the database."""
-        tables = self.get_table_names()
-        schema = {}
+        inspector = inspect(self.engine)
+        # Skip system schemas; include everything else
+        skip = {"information_schema", "pg_catalog"}
+        schemas = [s for s in inspector.get_schema_names() if s not in skip]
+        db = {"database_name": self.engine.url.database, "tables": {}}
 
-        for table in tables:
-            schema[table] = self.get_table_schema(table)
-
-        return schema
+        for sch in sorted(schemas):
+            for tbl in self.get_table_names(schema=sch):
+                db["tables"][f"{sch}.{tbl}"] = self.get_table_schema(tbl, schema=sch)
+        return db
 
     def execute_operation(self, operation_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute common database operations based on operation type."""
