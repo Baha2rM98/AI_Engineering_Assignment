@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import Mock, patch
-from app.agent.langraph_agent import (
+from app.agent.langgraph_agent import (
     AgentState,
     initialize_agent,
     query_database
@@ -134,7 +134,7 @@ class TestAgentWorkflowNodes:
         mock_gemini.return_value = mock_llm
 
         # Create agent and get workflow
-        from app.agent.langraph_agent import initialize_agent
+        from app.agent.langgraph_agent import initialize_agent
         agent = initialize_agent()
 
         # Test state
@@ -156,7 +156,7 @@ class TestAgentWorkflowNodes:
         mock_gemini.return_value = mock_llm
 
         # Test that agent initializes with planning capability
-        from app.agent.langraph_agent import initialize_agent
+        from app.agent.langgraph_agent import initialize_agent
         agent = initialize_agent()
         assert agent is not None
 
@@ -169,7 +169,7 @@ class TestAgentWorkflowNodes:
         mock_llm.invoke.return_value = mock_response
         mock_gemini.return_value = mock_llm
 
-        from app.agent.langraph_agent import initialize_agent
+        from app.agent.langgraph_agent import initialize_agent
         agent = initialize_agent()
         assert agent is not None
 
@@ -182,7 +182,7 @@ class TestAgentWorkflowNodes:
         mock_llm.invoke.return_value = mock_response
         mock_gemini.return_value = mock_llm
 
-        from app.agent.langraph_agent import initialize_agent
+        from app.agent.langgraph_agent import initialize_agent
         agent = initialize_agent()
         assert agent is not None
 
@@ -195,7 +195,7 @@ class TestAgentWorkflowNodes:
         mock_llm.invoke.return_value = mock_response
         mock_gemini.return_value = mock_llm
 
-        from app.agent.langraph_agent import initialize_agent
+        from app.agent.langgraph_agent import initialize_agent
         agent = initialize_agent()
         assert agent is not None
 
