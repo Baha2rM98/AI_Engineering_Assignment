@@ -1,3 +1,4 @@
 .idea
 query_samples.txt
 .env
+*.log
